@@ -2,7 +2,7 @@
 const S = {
   forceTicker: "", ticker: "", targetOverride: "",
   history: 750, refreshSec: 3, paused: false,
-  closeEpochMs: null, markets: [], timer: null, quickTimer: null, countdownTimer: null,
+  closeEpochMs: null, markets: [], marketsKey: "", timer: null, quickTimer: null, countdownTimer: null,
   lastStateAt: null,
 };
 
@@ -111,21 +111,26 @@ function renderDashboard(d) {
 function renderKalshi(d) {
   paperTick(d);
   renderPaper();
-  // market dropdown (preserve selection)
+  // market dropdown: rebuild ONLY when the market list actually changes
+  // (was rebuilding ~50 options on every 3s poll = pointless DOM churn)
   S.markets = d.markets || [];
   const sel = $("market-select");
   const prev = S.ticker || (sel.value || "");
-  sel.innerHTML = "";
-  if (!S.markets.length) {
-    const o = document.createElement("option"); o.value = ""; o.textContent = "— no markets discovered —";
-    sel.appendChild(o);
-  } else {
-    S.markets.forEach((m) => {
-      const o = document.createElement("option");
-      o.value = m.ticker;
-      o.textContent = (m.live ? "🟢 " : "⚪ ") + m.title + " | closes " + m.close_label + " | " + m.ticker;
+  const mkKey = S.markets.map((m) => m.ticker + (m.live ? ":1" : ":0")).join(",");
+  if (mkKey !== S.marketsKey) {
+    S.marketsKey = mkKey;
+    sel.innerHTML = "";
+    if (!S.markets.length) {
+      const o = document.createElement("option"); o.value = ""; o.textContent = "— no markets discovered —";
       sel.appendChild(o);
-    });
+    } else {
+      S.markets.forEach((m) => {
+        const o = document.createElement("option");
+        o.value = m.ticker;
+        o.textContent = (m.live ? "🟢 " : "⚪ ") + m.title + " | closes " + m.close_label + " | " + m.ticker;
+        sel.appendChild(o);
+      });
+    }
   }
   if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
   else if (S.markets.length) sel.value = S.markets[0].ticker;
@@ -519,7 +524,6 @@ $("market-select").addEventListener("change", (e) => {
   S.ticker = e.target.value; S.forceTicker = ""; $("force-ticker").value = "";
   pollState();
 });
-$("history-select").addEventListener("change", (e) => { S.history = parseInt(e.target.value, 10); pollState(); });
 $("refresh-select").addEventListener("change", (e) => { S.refreshSec = parseInt(e.target.value, 10); restartPoll(); });
 $("pause-btn").addEventListener("click", () => {
   S.paused = !S.paused;

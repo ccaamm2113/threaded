@@ -576,9 +576,9 @@ def quote_cents(market, keys):
 # --------------------------------------------------------------------------
 # Signal + entry/exit engine (pure logic, no Flask/Streamlit)
 # --------------------------------------------------------------------------
-GIRL_FOR_CLS = {"up": "img/yuki_bullish.webp?v=24",
-                "down": "img/yuki_bearish.webp?v=24",
-                "wait": "img/yuki_chill.webp?v=24"}
+GIRL_FOR_CLS = {"up": "img/yuki_bullish.webp?v=25",
+                "down": "img/yuki_bearish.webp?v=25",
+                "wait": "img/yuki_chill.webp?v=25"}
 
 
 def chop_ratio(btc):
@@ -1501,7 +1501,7 @@ def api_candles():
 
 @app.route("/api/version")
 def api_version():
-    return jsonify({"version": "v24"})
+    return jsonify({"version": "v25"})
 
 
 @app.route("/")

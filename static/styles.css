@@ -136,7 +136,6 @@ h4 { margin: 0 0 10px; font-size: .95rem; }
   position: relative; overflow: hidden;
   background: var(--glass); border: 1px solid var(--card-border);
   border-radius: var(--r-md); padding: 15px 17px;
-  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   transition: transform .15s, border-color .15s, box-shadow .15s; }
 .card:hover { transform: translateY(-2px); border-color: rgba(129,140,248,.4);
   box-shadow: 0 12px 30px rgba(0,0,0,.4); }
@@ -155,8 +154,7 @@ h4 { margin: 0 0 10px; font-size: .95rem; }
    self-contained panels. */
 .signal-up, .signal-down, .signal-wait {
   border-radius: var(--r-lg); padding: 26px 28px; color: #fff;
-  border: 1px solid; position: relative; overflow: hidden;
-  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+  border: 1px solid; position: relative; overflow: hidden; }
 .signal-up::after, .signal-down::after, .signal-wait::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
   background: radial-gradient(600px 200px at 20% 0%, rgba(255,255,255,.09), transparent 70%); }
@@ -184,8 +182,7 @@ h4 { margin: 0 0 10px; font-size: .95rem; }
 /* ---- yuki sidekick card ---- */
 .yuki-card {
   background: var(--glass); border: 1px solid var(--card-border); border-radius: var(--r-lg);
-  padding: 20px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 12px;
-  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+  padding: 20px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 12px; }
 .yuki-card .avatar { width: 118px; height: 118px; border-radius: 50%; object-fit: cover;
   border: 3px solid rgba(240,171,252,.65); box-shadow: 0 0 26px rgba(240,171,252,.4); }
 .yuki-says { background: rgba(255,255,255,.92); color: #1e1b4b; border-radius: 16px;
@@ -208,8 +205,7 @@ h4 { margin: 0 0 10px; font-size: .95rem; }
   border: 1px solid var(--card-border); box-shadow: var(--shadow); }
 
 .why-panel { background: var(--glass); border: 1px solid var(--card-border);
-  border-radius: var(--r-md); padding: 16px 18px; margin: 14px 0;
-  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+  border-radius: var(--r-md); padding: 16px 18px; margin: 14px 0; }
 .why-head { font-weight: 700; margin-bottom: 10px; font-size: .95rem; }
 .why-conv { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; font-size: .85rem; color: var(--muted); }
 .why-conv .strength { flex: 1; margin: 0; }
@@ -235,8 +231,7 @@ h4 { margin: 0 0 10px; font-size: .95rem; }
 
 .buysell { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .bs-col { background: var(--glass); border: 1px solid var(--card-border);
-  border-radius: var(--r-md); padding: 18px;
-  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+  border-radius: var(--r-md); padding: 18px; }
 .bs-col h4 { font-size: 1rem; }
 .checklist { list-style: none; margin: 0 0 12px; padding: 0; }
 .checklist li { padding: 8px 2px; border-bottom: 1px dashed rgba(255,255,255,.08); font-size: .9rem; }
