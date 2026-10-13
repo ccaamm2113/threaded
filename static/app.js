@@ -109,6 +109,8 @@ function renderDashboard(d) {
 
 /* ---------- kalshi tab ---------- */
 function renderKalshi(d) {
+  paperTick(d);
+  renderPaper();
   // market dropdown (preserve selection)
   S.markets = d.markets || [];
   const sel = $("market-select");
@@ -280,6 +282,14 @@ function renderWhy(d) {
     if (c.ai_disagree) rows.push(["Note", "AI reader disagrees — capped at LEAN", ""]);
   }
   if (c.param_p != null) rows.push(["Parametric", pct1(c.param_p) + " up (vol model)", c.param_p >= 0.5 ? "up" : "down"]);
+  if (c.htf_p != null) {
+    const tfs = (d.htf && d.htf.tfs) || {};
+    const tfTxt = ["5m", "15m", "1H", "4H"].filter((tf) => tfs[tf] != null).map((tf) => {
+      const v = tfs[tf];
+      return tf + (v > 0.15 ? "▲" : v < -0.15 ? "▼" : "●");
+    }).join(" ");
+    rows.push(["Higher TFs", pct1(c.htf_p) + " up" + (tfTxt ? " · " + tfTxt : ""), c.htf_p >= 0.5 ? "up" : "down"]);
+  }
   if (d.sentiment && d.sentiment.score != null) rows.push(["Sentiment", d.sentiment.label + " (" + d.sentiment.score + ")", ""]);
   if (c.engine_b_p != null) {
     rows.push(["Engine B", pct1(c.engine_b_p) + " up" + (c.engines_agree ? " · agrees" : c.engine_b_disagree ? " · disagrees" : ""), c.engine_b_p >= 0.5 ? "up" : "down"]);
@@ -527,7 +537,167 @@ function restartPoll() {
   S.quickTimer = setInterval(pollQuick, 1000);
 }
 
+/* ---------- v24: paper betting (simulated, localStorage) ---------- */
+const paper = {
+  key: "threaded_paper_v1",
+  bets: [],
+  side: "YES",
+  prevTicker: null,
+  lastPrice: null,
+  lastQuotes: null,
+  lastTarget: null,
+  load() {
+    try { this.bets = JSON.parse(localStorage.getItem(this.key)) || []; }
+    catch (e) { this.bets = []; }
+    // open bets can't be settled after a reload — mark expired, no P&L
+    let dropped = false;
+    this.bets.forEach((b) => {
+      if (b.status === "open") { b.status = "expired"; dropped = true; }
+    });
+    if (dropped) this.save();
+  },
+  save() {
+    try { localStorage.setItem(this.key, JSON.stringify(this.bets.slice(-200))); }
+    catch (e) {}
+  },
+};
+
+function paperMoney(c) {
+  if (c == null || !isFinite(c)) return "—";
+  return (c >= 0 ? "+$" : "−$") + (Math.abs(c) / 100).toFixed(2);
+}
+
+// called on every state poll: track ticker rollover, auto-settle finished windows
+function paperTick(d) {
+  const ticker = d.market && d.market.ticker;
+  const price = d.btc && d.btc.price;
+  const target = d.market && d.market.target;
+  if (ticker && paper.prevTicker && ticker !== paper.prevTicker) {
+    let changed = false;
+    paper.bets.forEach((b) => {
+      if (b.status === "open" && b.ticker === paper.prevTicker &&
+          paper.lastPrice != null && b.target != null) {
+        const win = b.side === "YES" ? paper.lastPrice >= b.target : paper.lastPrice < b.target;
+        b.status = "settled";
+        b.settlePx = Math.round(paper.lastPrice);
+        b.win = win;
+        b.pnlC = win ? b.contracts * (100 - b.priceC) : -b.contracts * b.priceC;
+        changed = true;
+      }
+    });
+    if (changed) paper.save();
+  }
+  if (ticker) paper.prevTicker = ticker;
+  if (price != null) paper.lastPrice = price;
+  if (d.quotes) paper.lastQuotes = d.quotes;
+  if (target != null) paper.lastTarget = target;
+}
+
+function paperSetSide(s) {
+  paper.side = s;
+  $("paper-yes").classList.toggle("sel-yes", s === "YES");
+  $("paper-no").classList.toggle("sel-no", s === "NO");
+  const q = paper.lastQuotes;
+  if (q) $("paper-price").placeholder = String(s === "YES" ? q.yes_ask : q.no_ask) + "¢ ask";
+}
+
+function paperPlace() {
+  const q = paper.lastQuotes;
+  if (!q || !paper.prevTicker || paper.lastTarget == null) return;
+  const contracts = Math.max(1, Math.min(10000, parseInt($("paper-contracts").value, 10) || 0));
+  if (!contracts) return;
+  const askC = paper.side === "YES" ? q.yes_ask : q.no_ask;
+  if (askC == null) return;
+  let priceC = Math.round(parseFloat($("paper-price").value));
+  if (!(priceC >= 1 && priceC <= 99)) priceC = askC; // empty = fill at ask
+  paper.bets.push({
+    id: Date.now(), ticker: paper.prevTicker, side: paper.side,
+    contracts: contracts, priceC: priceC, target: paper.lastTarget,
+    placedAt: Date.now(), status: "open",
+  });
+  paper.save();
+  renderPaper();
+}
+
+function paperClose(id) {
+  const b = paper.bets.find((x) => x.id === id);
+  if (!b || b.status !== "open") return;
+  const q = paper.lastQuotes;
+  const bidC = b.side === "YES" ? (q && q.yes_bid) : (q && q.no_bid);
+  if (bidC == null) return;
+  b.status = "closed";
+  b.exitC = bidC;
+  b.pnlC = b.contracts * (bidC - b.priceC);
+  paper.save();
+  renderPaper();
+}
+
+function renderPaper() {
+  const q = paper.lastQuotes;
+  $("paper-yes-price").textContent = q && q.yes_ask != null ? q.yes_ask + "¢" : "—";
+  $("paper-no-price").textContent = q && q.no_ask != null ? q.no_ask + "¢" : "—";
+
+  const open = paper.bets.filter((b) => b.status === "open");
+  const oh = $("paper-open");
+  if (!open.length) { oh.innerHTML = ""; }
+  else {
+    oh.innerHTML = open.map((b) => {
+      let uTxt = "";
+      if (q) {
+        const bidC = b.side === "YES" ? q.yes_bid : q.no_bid;
+        if (bidC != null) {
+          const u = b.contracts * (bidC - b.priceC);
+          uTxt = ' · <b class="' + (u >= 0 ? "pos" : "neg") + '">' + paperMoney(u) + "</b>";
+        }
+      }
+      return '<div class="paper-bet"><span><b class="' + (b.side === "YES" ? "pos" : "neg") + '">' +
+        b.side + "</b> " + b.contracts + " @ " + b.priceC + "¢" + uTxt +
+        '</span><button class="x" data-close="' + b.id + '" title="exit at bid">✕</button></div>';
+    }).join("");
+    oh.querySelectorAll("[data-close]").forEach((el) => {
+      el.onclick = () => paperClose(parseInt(el.getAttribute("data-close"), 10));
+    });
+  }
+
+  const done = paper.bets.filter((b) => b.status !== "open").slice(-8).reverse();
+  $("paper-history").innerHTML = done.map((b) => {
+    let res;
+    if (b.status === "expired") res = '<span class="fine">expired</span>';
+    else {
+      const w = b.status === "settled" ? b.win : b.pnlC > 0;
+      res = '<b class="' + (w ? "pos" : "neg") + '">' +
+        (b.status === "settled" ? (b.win ? "WIN" : "LOSS") : "EXIT") + " " + paperMoney(b.pnlC) + "</b>";
+    }
+    const extra = b.status === "settled" ? ' <span class="fine">settle $' + b.settlePx + "</span>" : "";
+    return '<div class="paper-bet"><span><b class="' + (b.side === "YES" ? "pos" : "neg") + '">' +
+      b.side + "</b> " + b.contracts + " @ " + b.priceC + "¢" + extra + "</span>" + res + "</div>";
+  }).join("");
+
+  const scored = paper.bets.filter((b) => (b.status === "settled" || b.status === "closed") && b.pnlC != null);
+  if (!scored.length) {
+    $("paper-totals").innerHTML = '<span class="fine">No settled bets yet — paper trade the signals and watch this space.</span>';
+  } else {
+    const tot = scored.reduce((a, b) => a + b.pnlC, 0);
+    const wins = scored.filter((b) => b.pnlC > 0).length;
+    $("paper-totals").innerHTML = 'Total <b class="' + (tot >= 0 ? "pos" : "neg") + '">' + paperMoney(tot) +
+      "</b> · " + wins + "W-" + (scored.length - wins) + "L · " + Math.round(wins / scored.length * 100) + "%";
+  }
+}
+
+function paperInit() {
+  paper.load();
+  paperSetSide("YES");
+  $("paper-yes").onclick = () => paperSetSide("YES");
+  $("paper-no").onclick = () => paperSetSide("NO");
+  $("paper-place").onclick = paperPlace;
+  $("paper-clear").onclick = (e) => {
+    e.preventDefault();
+    if (confirm("Clear all paper betting history?")) { paper.bets = []; paper.save(); renderPaper(); }
+  };
+}
+
 /* ---------- boot ---------- */
+paperInit();
 restartPoll();
 S.countdownTimer = setInterval(tickCountdown, 1000);
 pollState();

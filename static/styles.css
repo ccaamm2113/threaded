@@ -523,3 +523,20 @@ footer { padding: 8px; font-size: .76rem; }
 
 /* ---- v22: engine B panel ---- */
 .engb-panel { border-color: rgba(52,211,153,.35); background: rgba(52,211,153,.05); }
+
+/* ---- v24: paper betting ---- */
+.paper-panel { margin-top: 10px; padding: 10px 12px; border: 1px solid rgba(129,140,248,.25); border-radius: 12px; background: rgba(129,140,248,.05); }
+.paper-panel h3 { margin: 0 0 8px; font-size: 14px; }
+.paper-place { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-bottom: 8px; }
+.paper-sides { display: flex; gap: 6px; }
+.paper-side-btn { padding: 8px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.04); color: var(--ink); font-weight: 700; cursor: pointer; }
+.paper-side-btn b { font-variant-numeric: tabular-nums; }
+.paper-side-btn.sel-yes { border-color: var(--up); background: rgba(52,211,153,.15); box-shadow: 0 0 8px rgba(52,211,153,.35); }
+.paper-side-btn.sel-no { border-color: var(--down); background: rgba(248,113,113,.15); box-shadow: 0 0 8px rgba(248,113,113,.35); }
+.paper-field { display: flex; flex-direction: column; font-size: 11px; color: var(--mut); gap: 2px; }
+.paper-field input { width: 84px; padding: 7px 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,.18); background: rgba(0,0,0,.35); color: var(--ink); font-size: 14px; }
+.paper-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
+.paper-bet { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border-radius: 8px; background: rgba(0,0,0,.28); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.paper-bet .x { cursor: pointer; color: var(--mut); border: none; background: none; font-size: 14px; padding: 0 2px; }
+.paper-bet .x:hover { color: var(--down); }
+.paper-totals { font-size: 13px; font-weight: 700; margin: 4px 0; font-variant-numeric: tabular-nums; }

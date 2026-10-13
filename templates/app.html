@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Threaded — BTC 15-Minute Analyzer</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧵</text></svg>">
-<link rel="stylesheet" href="/static/styles.css?v=22">
+<link rel="stylesheet" href="/static/styles.css?v=24">
 </head>
 <body>
 <div id="bg-image"></div>
@@ -13,9 +13,9 @@
 
 <header class="topbar">
   <a class="brand" href="/app">
-    <img class="brand-logo" src="/static/img/threaded_logo.webp" alt="Threaded logo">
+    <img class="brand-logo" src="/static/img/threaded_logo.webp?v=24" alt="Threaded logo">
     <span class="brand-name">Threaded</span>
-    <span class="ver-tag">v22</span>
+    <span class="ver-tag">v24</span>
   </a>
   <div class="price-chip">
     <span class="live-dot" id="live-dot" title="live"></span>
@@ -37,7 +37,7 @@
 
 <div class="controls-bar">
   <div class="yuki-mini">
-    <img src="/static/img/media-generation-anime-mascot-chibi-0-3d04dee7-3ef9-4526-82b3-0549ad5bd75d.webp" alt="Yuki">
+    <img src="/static/img/media-generation-anime-mascot-chibi-0-3d04dee7-3ef9-4526-82b3-0549ad5bd75d.webp?v=24" alt="Yuki">
     <div class="who"><b>Yuki</b> · your trading copilot<br><span id="poll-status" class="poll-status">connecting…</span></div>
   </div>
   <div class="settings">
@@ -88,7 +88,7 @@
       </div>
       <div class="yuki-card">
         <span class="yuki-tag">✦ Copilot ✦</span>
-        <img id="dash-girl" class="avatar" src="/static/img/yuki_chill.webp" alt="Yuki">
+        <img id="dash-girl" class="avatar" src="/static/img/yuki_chill.webp?v=24" alt="Yuki">
         <div class="yuki-says" id="dash-yuki-says">Yuki is warming up…</div>
       </div>
     </div>
@@ -173,7 +173,7 @@
       <div id="above-below" class="signal-wait slim"><b id="above-below-text"></b></div>
 
       <div class="signal-duo">
-        <img id="kalshi-girl" class="signal-girl" src="/static/img/yuki_chill.webp" alt="Yuki">
+        <img id="kalshi-girl" class="signal-girl" src="/static/img/yuki_chill.webp?v=24" alt="Yuki" loading="lazy">
         <div id="kalshi-signal" class="signal-wait">
           <span class="signal-kicker">Kalshi signal</span>
           <h2 id="kalshi-signal-title">—</h2>
@@ -252,6 +252,23 @@
         </div>
       </div>
 
+      <div class="paper-panel" id="paper-panel">
+        <h3>📝 Paper betting <span class="fine">simulated — no real money</span></h3>
+        <div class="paper-place">
+          <div class="paper-sides">
+            <button id="paper-yes" class="paper-side-btn">YES <b id="paper-yes-price">—</b></button>
+            <button id="paper-no" class="paper-side-btn">NO <b id="paper-no-price">—</b></button>
+          </div>
+          <label class="paper-field">Contracts <input id="paper-contracts" type="number" value="10" min="1" max="10000" step="1"></label>
+          <label class="paper-field">Price ¢ <input id="paper-price" type="number" min="1" max="99" step="0.5" placeholder="ask"></label>
+          <button id="paper-place" class="btn-primary">Place paper bet</button>
+        </div>
+        <div id="paper-open" class="paper-list"></div>
+        <div id="paper-history" class="paper-list"></div>
+        <div class="paper-totals" id="paper-totals"></div>
+        <p class="fine">Entry fills at the live ask, exits at the bid. Bets auto-settle when the market window rolls, using the last seen BTC price vs the target (estimated). <a href="#" id="paper-clear">clear history</a></p>
+      </div>
+
       <details class="disclosure">
         <summary>📊 Signal details</summary>
         <div class="cards3">
@@ -299,18 +316,18 @@
     <h3>🌸 Meet the team</h3>
     <p class="fine">Yuki changes outfits with the signal — bullish, bearish, or chill.</p>
     <div class="team">
-      <div class="teammate"><img src="/static/img/yuki_bullish.webp" alt="Bullish Yuki"><b>Yuki — Bullish mode 🟢</b><span>Shows up when the desk leans UP.</span></div>
-      <div class="teammate"><img src="/static/img/yuki_bearish.webp" alt="Bearish Yuki"><b>Yuki — Bearish mode 🔴</b><span>Shows up when the desk leans DOWN.</span></div>
-      <div class="teammate"><img src="/static/img/yuki_chill.webp" alt="Chill Yuki"><b>Yuki — Chill mode 🟡</b><span>Shows up when it's WAIT — coffee time.</span></div>
+      <div class="teammate"><img loading="lazy" src="/static/img/yuki_bullish.webp?v=24" alt="Bullish Yuki"><b>Yuki — Bullish mode 🟢</b><span>Shows up when the desk leans UP.</span></div>
+      <div class="teammate"><img loading="lazy" src="/static/img/yuki_bearish.webp?v=24" alt="Bearish Yuki"><b>Yuki — Bearish mode 🔴</b><span>Shows up when the desk leans DOWN.</span></div>
+      <div class="teammate"><img loading="lazy" src="/static/img/yuki_chill.webp?v=24" alt="Chill Yuki"><b>Yuki — Chill mode 🟡</b><span>Shows up when it's WAIT — coffee time.</span></div>
     </div>
   </section>
 </main>
 
 <footer>
   <b>🧵 Threaded</b> · Made with 💜 by Yuki · Research only, <b>not financial advice</b>. Verify everything on Kalshi before trading.
-  <span class="ver-badge">v22 · Instant</span>
+  <span class="ver-badge">v24 · Instant</span>
 </footer>
 
-<script src="/static/app.js?v=22"></script>
+<script src="/static/app.js?v=24"></script>
 </body>
 </html>

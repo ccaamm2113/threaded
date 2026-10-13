@@ -27,6 +27,7 @@ from flow_signals import get_flow_signals, flow_score_direction_relative
 from ai_reader import get_ai_read, configured as ai_configured
 from parametric import parametric_up_prob, get_sentiment
 from engine_b import engine_b_vote
+from timeframes import htf_vote
 
 BASE_DIR = Path(__file__).parent
 KALSHI = "https://external-api.kalshi.com/trade-api/v2"
@@ -145,10 +146,9 @@ def get_market_klines(limit=1000):
             df[c] = pd.to_numeric(df[c], errors="coerce")
         df = df.sort_values("time").drop_duplicates("time").set_index("time")
         df["quote_volume"] = df["volume"] * df["close"]
-        df["taker_buy_base"] = np.nan
         if len(df) < 100:
             raise ValueError(f"Coinbase returned only {len(df)} candles")
-        return df[["open", "high", "low", "close", "volume", "quote_volume", "taker_buy_base"]].tail(limit), "Coinbase", errors
+        return df[["open", "high", "low", "close", "volume", "quote_volume"]].tail(limit), "Coinbase", errors
     except Exception as e:
         errors.append(f"Coinbase: {e}")
     try:
@@ -169,10 +169,9 @@ def get_market_klines(limit=1000):
             df[c] = pd.to_numeric(df[c], errors="coerce")
         df = df.sort_values("time").drop_duplicates("time").set_index("time")
         df["quote_volume"] = df["volume"] * df["close"]
-        df["taker_buy_base"] = np.nan
         if len(df) < 100:
             raise ValueError(f"Kraken returned only {len(df)} candles")
-        return df[["open", "high", "low", "close", "volume", "quote_volume", "taker_buy_base"]].tail(limit), "Kraken (fallback)", errors
+        return df[["open", "high", "low", "close", "volume", "quote_volume"]].tail(limit), "Kraken (fallback)", errors
     except Exception as e:
         errors.append(f"Kraken: {e}")
     raise RuntimeError("All market-data sources failed. " + " | ".join(errors))
@@ -287,7 +286,6 @@ def build_features(df):
     x["distance_sma_15"] = close / close.rolling(15).mean() - 1
     x["distance_sma_60"] = close / close.rolling(60).mean() - 1
     x["range_5m"] = (df["high"].rolling(5).max() - df["low"].rolling(5).min()) / close
-    x["taker_buy_share"] = df["taker_buy_base"] / df["volume"].replace(0, np.nan)
     x["rsi_14"] = rsi(close, 14)
     x["rsi_7"] = rsi(close, 7)
     m = macd_line(close)
@@ -578,9 +576,9 @@ def quote_cents(market, keys):
 # --------------------------------------------------------------------------
 # Signal + entry/exit engine (pure logic, no Flask/Streamlit)
 # --------------------------------------------------------------------------
-GIRL_FOR_CLS = {"up": "img/yuki_bullish.webp",
-                "down": "img/yuki_bearish.webp",
-                "wait": "img/yuki_chill.webp"}
+GIRL_FOR_CLS = {"up": "img/yuki_bullish.webp?v=24",
+                "down": "img/yuki_bearish.webp?v=24",
+                "wait": "img/yuki_chill.webp?v=24"}
 
 
 def chop_ratio(btc):
@@ -599,7 +597,7 @@ def chop_ratio(btc):
 
 def compute_direction(blended_up, p_up, target_p, momentum_up, momentum_down,
                       r3, r5, up_edge, down_edge, minutes_left, chop, w_model, w_hist,
-                      flow=None, ai=None, param_p=None, b_vote=None):
+                      flow=None, ai=None, param_p=None, b_vote=None, htf_p=None):
     """Tiered direction check with conviction scoring.
 
     conviction in [-1, 1] = 0.45*probability + 0.20*momentum + 0.20*edge
@@ -625,6 +623,7 @@ def compute_direction(blended_up, p_up, target_p, momentum_up, momentum_down,
     comp["param_p"] = float(param_p) if param_p is not None else None
     b_p = (b_vote or {}).get("p_up")
     comp["engine_b_p"] = float(b_p) if b_p is not None else None
+    comp["htf_p"] = float(htf_p) if htf_p is not None else None
     if minutes_left < 0.5:
         return ("WAIT", "wait", "wait",
                 "Less than 30 seconds remain; settlement noise dominates.",
@@ -741,6 +740,8 @@ def compute_direction(blended_up, p_up, target_p, momentum_up, momentum_down,
         extras_txt += f", AI {ai_vote:.0%} up"
     if param_p is not None:
         extras_txt += f", parametric {param_p:.0%}"
+    if htf_p is not None:
+        extras_txt += f", HTF {htf_p:.0%}"
     reason = (f"Model {p_up:.0%} vs history {target_p:.0%} "
               f"(blend {w_model:.0%}/{w_hist:.0%}), momentum {comp['momentum']}, "
               f"edge {edge_here:+.1f}c vs {min_edge:.0f}c needed{extras_txt}, "
@@ -1213,8 +1214,19 @@ def compute_state(force_ticker="", target_override=0.0, history=750, selected_ti
     # model vs the REAL Kalshi target, from our own 1m candle volatility.
     # Cheap (microseconds) and complementary to the empirical history vote.
     param_p = parametric_up_prob(current, target, minutes_left, close_series)
-    if param_p is not None:
+    # multi-timeframe trend vote (5m/15m/1H/4H): validated 60-65% directional
+    # agreement on recent data; kept small and shrunk like the other votes
+    try:
+        htf = htf_vote()
+    except Exception:
+        htf = None
+    htf_p = (htf or {}).get("p_up")
+    if param_p is not None and htf_p is not None:
+        blended_up = 0.75 * blended_up + 0.15 * param_p + 0.10 * htf_p
+    elif param_p is not None:
         blended_up = 0.85 * blended_up + 0.15 * param_p
+    elif htf_p is not None:
+        blended_up = 0.90 * blended_up + 0.10 * htf_p
     up_edge = blended_up * 100 - up_ask if up_ask is not None else None
     down_edge = (1 - blended_up) * 100 - down_ask if down_ask is not None else None
     momentum_up = r3 > 0 and r5 > 0
@@ -1263,8 +1275,9 @@ def compute_state(force_ticker="", target_override=0.0, history=750, selected_ti
     label, cls, tier, reason, min_edge, conviction, comp = compute_direction(
         blended_up, p_up, target_p, momentum_up, momentum_down,
         r3, r5, up_edge, down_edge, minutes_left, chop, w_model, w_hist,
-        flow=flow, ai=ai, param_p=param_p, b_vote=eng_b)
+        flow=flow, ai=ai, param_p=param_p, b_vote=eng_b, htf_p=htf_p)
     state["engine_b"] = eng_b
+    state["htf"] = htf
     state["flow"] = {k: _f(v) for k, v in (flow or {}).items() if not k.startswith("_")}
     state["ai"] = ai
     state["ai_enabled"] = ai_configured()
@@ -1273,7 +1286,7 @@ def compute_state(force_ticker="", target_override=0.0, history=750, selected_ti
     state["signal"] = {
         "label": label, "cls": cls, "tier": tier, "girl": GIRL_FOR_CLS[cls],
         "blended_up": blended_up, "model_p_up": p_up, "target_p": target_p,
-        "param_p": param_p,
+        "param_p": param_p, "htf_p": htf_p,
         "horizon": horizon, "sample_count": sample_count,
         "reason": reason, "prob_bar": prob_bar, "min_edge": min_edge,
         "up_edge": up_edge, "down_edge": down_edge,
@@ -1315,6 +1328,11 @@ def compute_state(force_ticker="", target_override=0.0, history=750, selected_ti
         blended_up, up_edge, down_edge, up_ask, up_bid, down_ask, down_bid,
         r1, r3, r5, minutes_left, current, target, proj, chop,
         flow=flow, closes=close_series)
+    # live executable quotes (cents) for the paper-betting card
+    state["quotes"] = {
+        "yes_ask": up_ask, "yes_bid": up_bid,
+        "no_ask": down_ask, "no_bid": down_bid,
+    }
     return state
 
 
@@ -1483,7 +1501,7 @@ def api_candles():
 
 @app.route("/api/version")
 def api_version():
-    return jsonify({"version": "v22"})
+    return jsonify({"version": "v24"})
 
 
 @app.route("/")
