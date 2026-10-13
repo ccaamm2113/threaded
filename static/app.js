@@ -183,6 +183,9 @@ function renderKalshi(d) {
   // AI read
   renderAI(d);
 
+  // Engine B second opinion
+  renderEngineB(d);
+
   // projected spike
   renderProjection(d);
 
@@ -278,6 +281,9 @@ function renderWhy(d) {
   }
   if (c.param_p != null) rows.push(["Parametric", pct1(c.param_p) + " up (vol model)", c.param_p >= 0.5 ? "up" : "down"]);
   if (d.sentiment && d.sentiment.score != null) rows.push(["Sentiment", d.sentiment.label + " (" + d.sentiment.score + ")", ""]);
+  if (c.engine_b_p != null) {
+    rows.push(["Engine B", pct1(c.engine_b_p) + " up" + (c.engines_agree ? " · agrees" : c.engine_b_disagree ? " · disagrees" : ""), c.engine_b_p >= 0.5 ? "up" : "down"]);
+  }
   $("why-rows").innerHTML = rows.map((r) =>
     '<div class="why-row"><span>' + r[0] + '</span><b class="' + dot(r[2]) + '">' + r[1] + "</b></div>").join("");
 }
@@ -297,6 +303,28 @@ function renderAI(d) {
   $("ai-reasoning").textContent = a.reasoning || "";
   $("ai-bull").innerHTML = (a.bull || []).map((x) => "<li>" + x + "</li>").join("");
   $("ai-bear").innerHTML = (a.bear || []).map((x) => "<li>" + x + "</li>").join("");
+}
+
+function renderEngineB(d) {
+  const panel = $("engb-panel");
+  const b = d.engine_b;
+  const c = d.signal ? d.signal.components : null;
+  if (!b || b.p_up == null) { panel.hidden = true; return; }
+  panel.hidden = false;
+  const v = Math.round(b.p_up * 100);
+  $("engb-vote").textContent = v + "% UP";
+  $("engb-vote").className = b.p_up >= 0.5 ? "pos" : "neg";
+  $("engb-fill").style.width = Math.round(Math.abs(b.p_up - 0.5) * 200) + "%";
+  $("engb-fill").style.background = b.p_up >= 0.5 ? "var(--up)" : "var(--down)";
+  $("engb-agree").textContent = c && c.engines_agree ? "· agrees with Engine A" : c && c.engine_b_disagree ? "· disagrees with Engine A" : "";
+  const dot = (x) => x >= 0 ? "pos" : "neg";
+  const names = {macro: "Macro regime", positioning: "Positioning", tape: "Kalshi tape", sentiment: "Sentiment"};
+  const rows = Object.keys(b.votes || {}).map((k) => {
+    const val = b.votes[k];
+    return '<div class="why-row"><span>' + (names[k] || k) + '</span><b class="' + dot(val) + '">' +
+      (val >= 0 ? "+" : "") + Math.round(val * 100) + "%</b></div>";
+  });
+  $("engb-rows").innerHTML = rows.join("");
 }
 
 function renderEntryExit(d) {
@@ -391,6 +419,19 @@ function renderScalp(d) {
       const li = document.createElement("li");
       li.textContent = "—";
       ul.appendChild(li);
+    }
+    const st = s.stats || {};
+    const el = $("scalp-" + side + "-stats");
+    if (st.p_2m != null) {
+      const ev = st.ev_c == null ? "—" : (st.ev_c >= 0 ? "+" : "") + st.ev_c.toFixed(1) + "¢";
+      const evCls = st.ev_c == null ? "" : (st.ev_c >= 0 ? "pos" : "neg");
+      el.innerHTML = "2m win <b>" + Math.round(st.p_2m * 100) + "%</b> · " +
+        "+" + (st.exp_gain_c != null ? st.exp_gain_c.toFixed(1) : "—") + "¢/" +
+        "−" + (st.exp_heat_c != null ? st.exp_heat_c.toFixed(1) : "—") + "¢ · " +
+        "spread " + (st.spread_c != null ? st.spread_c.toFixed(1) : "—") + "¢ · " +
+        "EV <b class='" + evCls + "'>" + ev + "</b> <span class='fine'>(rough)</span>";
+    } else {
+      el.innerHTML = "";
     }
   });
 }

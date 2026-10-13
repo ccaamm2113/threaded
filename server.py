@@ -26,6 +26,7 @@ from models import db, User
 from flow_signals import get_flow_signals, flow_score_direction_relative
 from ai_reader import get_ai_read, configured as ai_configured
 from parametric import parametric_up_prob, get_sentiment
+from engine_b import engine_b_vote
 
 BASE_DIR = Path(__file__).parent
 KALSHI = "https://external-api.kalshi.com/trade-api/v2"
@@ -598,7 +599,7 @@ def chop_ratio(btc):
 
 def compute_direction(blended_up, p_up, target_p, momentum_up, momentum_down,
                       r3, r5, up_edge, down_edge, minutes_left, chop, w_model, w_hist,
-                      flow=None, ai=None, param_p=None):
+                      flow=None, ai=None, param_p=None, b_vote=None):
     """Tiered direction check with conviction scoring.
 
     conviction in [-1, 1] = 0.45*probability + 0.20*momentum + 0.20*edge
@@ -620,6 +621,10 @@ def compute_direction(blended_up, p_up, target_p, momentum_up, momentum_down,
         "chop_ratio": float(chop), "choppy": bool(chop > 2.0),
         "min_edge": float(min_edge), "disagree": False,
     }
+    # surfaced before ANY veto return so the Why panel stays complete
+    comp["param_p"] = float(param_p) if param_p is not None else None
+    b_p = (b_vote or {}).get("p_up")
+    comp["engine_b_p"] = float(b_p) if b_p is not None else None
     if minutes_left < 0.5:
         return ("WAIT", "wait", "wait",
                 "Less than 30 seconds remain; settlement noise dominates.",
@@ -636,8 +641,6 @@ def compute_direction(blended_up, p_up, target_p, momentum_up, momentum_down,
     comp["prob_score"] = float(prob_align)
     comp["mom_score"] = float(mom_align)
     comp["edge_score"] = float(edge_align)
-    # surfaced before the veto returns below so the Why panel stays complete
-    comp["param_p"] = float(param_p) if param_p is not None else None
 
     # --- extra vote: microstructure flow + AI reader (direction-relative) ---
     extra_parts = {}
@@ -696,6 +699,18 @@ def compute_direction(blended_up, p_up, target_p, momentum_up, momentum_down,
         conviction = min(0.45, conviction)
         cap_note += " AI reader disagrees with the quant lean - sized down from STRONG."
 
+    # Engine B agreement: independent second opinion. Agreement adds a small
+    # bonus; disagreement is noted but never overrides Engine A.
+    agree_b = b_p is not None and (b_p - 0.5) * direction > 0 and abs(b_p - 0.5) > 0.06
+    disagree_b = b_p is not None and (b_p - 0.5) * direction < 0 and abs(b_p - 0.5) > 0.10
+    comp["engines_agree"] = bool(agree_b)
+    comp["engine_b_disagree"] = bool(disagree_b)
+    if agree_b:
+        conviction = min(1.0, conviction + 0.05)
+        cap_note += " Engine B agrees (+0.05)."
+    if disagree_b:
+        cap_note += " Engine B disagrees with the quant lean."
+
     # chop filter: demand stronger conviction when the market is whipping
     need = 0.45 if chop > 2.0 else 0.28
     comp["need"] = float(need)
@@ -735,14 +750,43 @@ def compute_direction(blended_up, p_up, target_p, momentum_up, momentum_down,
 
 
 def compute_scalp(blended_up, up_edge, down_edge, up_ask, up_bid, down_ask, down_bid,
-                  r1, r3, r5, minutes_left, current, target, proj, chop):
-    """Fast Yes(up)/No(down) scalp scores, 0-100 each.
+                  r1, r3, r5, minutes_left, current, target, proj, chop,
+                  flow=None, closes=None):
+    """Fast Yes(up)/No(down) scalp scores, 0-100 each, plus rough 2-min stats.
 
     A scalp is a quick in-and-out: it wants a real edge vs the ask, momentum
     pointing the same way, room to reach the target, a tight spread, and
-    enough time left that it isn't an expiry coin-flip.
+    enough time left that it isn't an expiry coin-flip. Microstructure flow
+    (order-book / trade / Kalshi-book) now tilts the score, and each side
+    reports rough 2-minute stats: win probability, expected gain/heat in
+    contract cents, and EV = (2p-1)*gain - spread. Rough — research only.
     """
-    def side(edge, ask, bid, aligned, accelerating, need_pct, covers):
+    # --- microstructure tilt: +1 = bullish order-flow pressure ---
+    flow_raw = 0.0
+    if flow:
+        b = flow.get("book_imb") or 0.0
+        f = flow.get("trade_flow") or 0.0
+        k = flow.get("kalshi_book_imb") or 0.0
+        flow_raw = max(-1.0, min(1.0, 0.4 * b + 0.4 * f + 0.2 * k))
+
+    # --- contract sensitivity: cents gained per 1% BTC move (numeric bump
+    #     on the parametric model) + 1-min sigma for the 2-min excursion ---
+    sens_c_per_pct, sigma_1m = None, None
+    if closes is not None and current and target and minutes_left > 0:
+        try:
+            c = np.asarray(closes, dtype=float)
+            rets = np.diff(c) / c[:-1]
+            rets = rets[np.isfinite(rets)][-60:]
+            if len(rets) >= 20:
+                sigma_1m = float(np.std(rets))
+                p0 = parametric_up_prob(current, target, minutes_left, c)
+                p1 = parametric_up_prob(current * 1.0005, target, minutes_left, c)
+                if p0 is not None and p1 is not None:
+                    sens_c_per_pct = (p1 - p0) * 100.0 / 0.05
+        except Exception:
+            sens_c_per_pct, sigma_1m = None, None
+
+    def side(edge, ask, bid, aligned, accelerating, need_pct, covers, flow_tilt):
         score = 50.0
         reasons = []
         if edge is not None:
@@ -790,7 +834,25 @@ def compute_scalp(blended_up, up_edge, down_edge, up_ask, up_bid, down_ask, down
         if chop is not None and chop > 1.6:
             score -= 10
             reasons.append("choppy — fakes likely")
-        return max(0.0, min(100.0, score)), reasons[:3]
+        if abs(flow_tilt) > 0.05:
+            score += 8 * flow_tilt
+            reasons.append("order flow with you" if flow_tilt > 0 else "order flow against you")
+
+        # --- rough 2-minute scalp stats ---
+        tilt = (0.10 if aligned else -0.06) + 0.12 * flow_tilt
+        tilt = max(-0.30, min(0.30, tilt))
+        p_2m = 0.5 + tilt * 0.7  # shrunk toward 0.5, same philosophy as parametric
+        spread_c = round(ask - bid, 1) if (ask is not None and bid is not None) else None
+        exp_gain_c = exp_heat_c = ev_c = None
+        if sens_c_per_pct is not None and sigma_1m:
+            fav_pct = 0.8 * sigma_1m * np.sqrt(2.0) * 100.0
+            g = round(min(30.0, abs(sens_c_per_pct) * fav_pct), 1)
+            exp_gain_c, exp_heat_c = g, g
+            if spread_c is not None:
+                ev_c = round((2 * p_2m - 1) * g - spread_c, 1)
+        stats = {"p_2m": round(p_2m, 3), "spread_c": spread_c,
+                 "exp_gain_c": exp_gain_c, "exp_heat_c": exp_heat_c, "ev_c": ev_c}
+        return max(0.0, min(100.0, score)), reasons[:3], stats
 
     req_up_pct = (target - current) / current * 100
     req_down_pct = (current - target) / current * 100
@@ -802,10 +864,10 @@ def compute_scalp(blended_up, up_edge, down_edge, up_ask, up_bid, down_ask, down
     up_accel = r1 > (r3 / 3) + 0.005
     down_accel = r1 < (r3 / 3) - 0.005
 
-    up_score, up_reasons = side(up_edge, up_ask, up_bid, up_aligned, up_accel,
-                                req_up_pct, covers_up)
-    down_score, down_reasons = side(down_edge, down_ask, down_bid, down_aligned,
-                                    down_accel, req_down_pct, covers_down)
+    up_score, up_reasons, up_stats = side(up_edge, up_ask, up_bid, up_aligned, up_accel,
+                                            req_up_pct, covers_up, flow_raw)
+    down_score, down_reasons, down_stats = side(down_edge, down_ask, down_bid, down_aligned,
+                                                down_accel, req_down_pct, covers_down, -flow_raw)
 
     def label_for(s):
         if s >= 70:
@@ -822,8 +884,10 @@ def compute_scalp(blended_up, up_edge, down_edge, up_ask, up_bid, down_ask, down
     elif best_score >= 55:
         verdict = best + "_lean"
     return {
-        "up": {"score": round(up_score), "label": label_for(up_score), "reasons": up_reasons},
-        "down": {"score": round(down_score), "label": label_for(down_score), "reasons": down_reasons},
+        "up": {"score": round(up_score), "label": label_for(up_score), "reasons": up_reasons,
+               "stats": up_stats},
+        "down": {"score": round(down_score), "label": label_for(down_score), "reasons": down_reasons,
+                 "stats": down_stats},
         "verdict": verdict,
         "best_score": round(best_score),
     }
@@ -1190,10 +1254,17 @@ def compute_state(force_ticker="", target_override=0.0, history=750, selected_ti
     except Exception:
         ai = None
 
+    # --- Engine B: independent second opinion (macro + positioning + tape) ---
+    try:
+        eng_b = engine_b_vote(ticker_selected, flow, (flow or {}).get("_r15_fallback"))
+    except Exception:
+        eng_b = None
+
     label, cls, tier, reason, min_edge, conviction, comp = compute_direction(
         blended_up, p_up, target_p, momentum_up, momentum_down,
         r3, r5, up_edge, down_edge, minutes_left, chop, w_model, w_hist,
-        flow=flow, ai=ai, param_p=param_p)
+        flow=flow, ai=ai, param_p=param_p, b_vote=eng_b)
+    state["engine_b"] = eng_b
     state["flow"] = {k: _f(v) for k, v in (flow or {}).items() if not k.startswith("_")}
     state["ai"] = ai
     state["ai_enabled"] = ai_configured()
@@ -1242,7 +1313,8 @@ def compute_state(force_ticker="", target_override=0.0, history=750, selected_ti
     # --- scalp signals (fast up/down) ---
     state["scalp"] = compute_scalp(
         blended_up, up_edge, down_edge, up_ask, up_bid, down_ask, down_bid,
-        r1, r3, r5, minutes_left, current, target, proj, chop)
+        r1, r3, r5, minutes_left, current, target, proj, chop,
+        flow=flow, closes=close_series)
     return state
 
 
@@ -1411,7 +1483,7 @@ def api_candles():
 
 @app.route("/api/version")
 def api_version():
-    return jsonify({"version": "v20.1"})
+    return jsonify({"version": "v22"})
 
 
 @app.route("/")

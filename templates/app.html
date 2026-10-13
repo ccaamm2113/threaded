@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Threaded — BTC 15-Minute Analyzer</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧵</text></svg>">
-<link rel="stylesheet" href="/static/styles.css?v=20">
+<link rel="stylesheet" href="/static/styles.css?v=22">
 </head>
 <body>
 <div id="bg-image"></div>
@@ -15,7 +15,7 @@
   <a class="brand" href="/app">
     <img class="brand-logo" src="/static/img/threaded_logo.webp" alt="Threaded logo">
     <span class="brand-name">Threaded</span>
-    <span class="ver-tag">v20.1</span>
+    <span class="ver-tag">v22</span>
   </a>
   <div class="price-chip">
     <span class="live-dot" id="live-dot" title="live"></span>
@@ -199,6 +199,13 @@
         <p class="fine">Experimental — one vote among several in the conviction score, not a trade call. Research only.</p>
       </div>
 
+      <div id="engb-panel" class="why-panel engb-panel" hidden>
+        <div class="why-head">🔮 Engine B <span class="fine" id="engb-agree"></span></div>
+        <div class="why-conv"><span>Second opinion</span><div class="strength"><div id="engb-fill" class="strength-fill"></div></div><b id="engb-vote">—</b></div>
+        <div id="engb-rows" class="why-rows"></div>
+        <p class="fine">Macro regime + positioning + Kalshi tape + sentiment — independent of the main engine. Agreement adds +0.05 conviction.</p>
+      </div>
+
       <div id="projection-panel" class="proj-panel" hidden>
         <div class="proj-title">📊 Projected spike <span class="fine">(rough, next <span id="proj-h">—</span>)</span></div>
         <div class="proj-row">
@@ -232,12 +239,14 @@
             <h4>🟢 Scalp UP <span id="scalp-up-label" class="scalp-tag"></span></h4>
             <div class="scalp-score"><b id="scalp-up-score">—</b><span>/100</span></div>
             <div class="strength"><div id="scalp-up-fill" class="strength-fill"></div></div>
+            <div class="scalp-stats" id="scalp-up-stats"></div>
             <ul id="scalp-up-reasons" class="checklist"></ul>
           </div>
           <div class="bs-col">
             <h4>🔴 Scalp DOWN <span id="scalp-down-label" class="scalp-tag"></span></h4>
             <div class="scalp-score"><b id="scalp-down-score">—</b><span>/100</span></div>
             <div class="strength"><div id="scalp-down-fill" class="strength-fill down"></div></div>
+            <div class="scalp-stats" id="scalp-down-stats"></div>
             <ul id="scalp-down-reasons" class="checklist"></ul>
           </div>
         </div>
@@ -299,9 +308,9 @@
 
 <footer>
   <b>🧵 Threaded</b> · Made with 💜 by Yuki · Research only, <b>not financial advice</b>. Verify everything on Kalshi before trading.
-  <span class="ver-badge">v20.1 · Instant</span>
+  <span class="ver-badge">v22 · Instant</span>
 </footer>
 
-<script src="/static/app.js?v=20"></script>
+<script src="/static/app.js?v=22"></script>
 </body>
 </html>

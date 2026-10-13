@@ -515,3 +515,11 @@ footer { padding: 8px; font-size: .76rem; }
 @media (max-width: 760px) {
   .cards6 { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ---- v21: scalp stats line ---- */
+.scalp-stats { font-size: .82rem; color: var(--muted); font-family: var(--mono);
+  margin: 2px 0 6px; }
+.scalp-stats b { color: var(--ink); }
+
+/* ---- v22: engine B panel ---- */
+.engb-panel { border-color: rgba(52,211,153,.35); background: rgba(52,211,153,.05); }
