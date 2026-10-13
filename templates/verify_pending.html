@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Verify your email — Threaded{% endblock %}
+{% block content %}
+<div class="auth-wrap">
+  <h2>📧 Check your inbox</h2>
+  {% if error %}<div class="auth-err">{{ error }}</div>{% endif %}
+  <p>We sent a verification link to <b>{{ email }}</b>. Click it to activate your account, then you can subscribe.</p>
+  <form method="post" action="/resend-verification">
+    <button class="btn" type="submit">Resend the email</button>
+  </form>
+  <p class="fine" style="margin-top:14px">In local dev the link prints to the server console instead of sending.</p>
+</div>
+{% endblock %}

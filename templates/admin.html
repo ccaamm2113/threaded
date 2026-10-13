@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Admin — Threaded{% endblock %}
+{% block content %}
+<style>
+.admin-wrap { max-width: 1000px; margin: 4vh auto; padding: 0 20px; }
+.admin-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.admin-table th, .admin-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--card-border); }
+.admin-table th { color: var(--muted); }
+.admin-table tr:hover td { background: rgba(255,255,255,.03); }
+.pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: .75rem; font-weight: 700; }
+.pill.yes { background: rgba(34,197,94,.2); color: #86efac; }
+.pill.no { background: rgba(255,255,255,.08); color: var(--muted); }
+.admin-actions form { display: inline; }
+.admin-actions button { background: rgba(255,255,255,.06); color: #fff; border: 1px solid var(--card-border);
+  border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: .75rem; margin-right: 4px; }
+.admin-actions button.danger { border-color: #ef4444; color: #fca5a5; }
+.stat-row { display: flex; gap: 16px; margin-bottom: 18px; }
+</style>
+<div class="admin-wrap">
+  <h2>🛠 Admin</h2>
+  <div class="stat-row">
+    <div class="card"><div class="card-label">Users</div><div class="card-value">{{ stats.total }}</div></div>
+    <div class="card"><div class="card-label">Verified</div><div class="card-value">{{ stats.verified }}</div></div>
+    <div class="card"><div class="card-label">Subscribers</div><div class="card-value">{{ stats.subscribers }}</div></div>
+  </div>
+  <table class="admin-table">
+    <tr><th>Email</th><th>Verified</th><th>Subscriber</th><th>Discord</th><th>Joined</th><th>Actions</th></tr>
+    {% for u in users %}
+    <tr>
+      <td>{{ u.email }}</td>
+      <td><span class="pill {{ 'yes' if u.email_verified else 'no' }}">{{ 'yes' if u.email_verified else 'no' }}</span></td>
+      <td><span class="pill {{ 'yes' if u.is_subscriber else 'no' }}">{{ 'yes' if u.is_subscriber else 'no' }}</span></td>
+      <td>{{ u.discord_username or '—' }}</td>
+      <td>{{ u.created_at.strftime('%Y-%m-%d') }}</td>
+      <td class="admin-actions">
+        <form method="post" action="/admin/toggle-sub/{{ u.id }}"><button type="submit">{{ 'Revoke sub' if u.is_subscriber else 'Grant sub' }}</button></form>
+        <form method="post" action="/admin/resend-verify/{{ u.id }}"><button type="submit">Resend verify</button></form>
+        <form method="post" action="/admin/delete/{{ u.id }}" onsubmit="return confirm('Delete {{ u.email }}?')"><button class="danger" type="submit">Delete</button></form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="fine" style="margin-top:16px">Access is controlled by the ADMIN_EMAILS env var. "Grant sub" is handy for comped founding members.</p>
+</div>
+{% endblock %}

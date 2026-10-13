@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Billing — Threaded{% endblock %}
+{% block content %}
+<div class="auth-wrap" style="max-width:520px">
+  <h2>💳 Billing</h2>
+  {% if error %}<div class="auth-err">{{ error }}</div>{% endif %}
+  {% if current_user.is_subscriber %}
+    <p>✅ <b>Threaded Pro is active</b> on {{ current_user.email }}.</p>
+    <form method="post" action="/billing/portal">
+      <button class="btn" type="submit">Manage subscription (cancel, update card…)</button>
+    </form>
+    <p class="fine">Opens Stripe's secure customer portal.</p>
+  {% else %}
+    <p>You're on the free plan — the live dashboard is locked.</p>
+    <form method="post" action="/subscribe">
+      <button class="btn" type="submit">Subscribe — {{ plan_price }}/mo</button>
+    </form>
+    <p class="fine">Secure checkout via Stripe. Cancel anytime.</p>
+  {% endif %}
+</div>
+{% endblock %}
