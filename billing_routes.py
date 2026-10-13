@@ -78,6 +78,7 @@ def subscribe():
         mode="subscription",
         line_items=[{"price": price_id, "quantity": 1}],
         customer=current_user.stripe_customer_id,
+        payment_method_types=["card", "cashapp"],
         billing_address_collection="auto",
         phone_number_collection={"enabled": False},
         automatic_tax={"enabled": False},

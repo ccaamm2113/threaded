@@ -5,6 +5,7 @@ Logic ported faithfully from the Streamlit app (~/workspace/btc_kalshi_realtime/
 """
 import re
 import time
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,6 +22,8 @@ from sklearn.preprocessing import StandardScaler
 
 import config
 from models import db, User
+from flow_signals import get_flow_signals, flow_score_direction_relative
+from ai_reader import get_ai_read, configured as ai_configured
 
 BASE_DIR = Path(__file__).parent
 KALSHI = "https://external-api.kalshi.com/trade-api/v2"
@@ -174,6 +177,54 @@ def get_market_klines(limit=1000):
 
 def get_market_klines_cached(limit=1000):
     return cached(("klines", limit), 20, lambda: get_market_klines(limit))
+
+
+# --- Instant spot price feed (v18) ---
+# /api/quick polls every 1s, so it needs its own tiny TTL — the 20s klines
+# cache above would make "instant" ticks a lie. Coinbase spot is a cheap,
+# fast endpoint; Kraken ticker is the fallback.
+_spot_cache = {"ts": 0.0, "price": None, "source": None}
+SPOT_TTL = 2  # seconds
+_spot_history = deque(maxlen=180)  # (epoch, price) for the 1-minute change
+
+
+def _fetch_spot():
+    try:
+        r = requests.get("https://api.coinbase.com/v2/prices/BTC-USD/spot", timeout=6)
+        r.raise_for_status()
+        return float(r.json()["data"]["amount"]), "Coinbase"
+    except Exception:
+        pass
+    r = requests.get("https://api.kraken.com/0/public/Ticker",
+                     params={"pair": "XBTUSD"}, timeout=6)
+    r.raise_for_status()
+    payload = r.json()
+    if payload.get("error"):
+        raise RuntimeError("; ".join(payload["error"]))
+    result = payload["result"]
+    key = next(k for k in result.keys() if k != "last")
+    return float(result[key]["c"][0]), "Kraken"
+
+
+def get_spot_price():
+    now = time.time()
+    if _spot_cache["price"] is not None and now - _spot_cache["ts"] < SPOT_TTL:
+        return _spot_cache["price"], _spot_cache["source"]
+    price, source = _fetch_spot()
+    _spot_cache.update(ts=now, price=price, source=source)
+    _spot_history.append((now, price))
+    return price, source
+
+
+def spot_change_1m_pct():
+    if len(_spot_history) < 2:
+        return None
+    now, price = _spot_history[-1]
+    for ts, p in reversed(_spot_history):
+        if now - ts >= 60:
+            return (price - p) / p * 100 if p else None
+    ts0, p0 = _spot_history[0]
+    return (price - p0) / p0 * 100 if p0 and now > ts0 else None
 
 
 def get_yahoo_returns(ticker, period="5d", interval="1m"):
@@ -419,7 +470,7 @@ def _discover_open_btc_markets():
 
 
 def get_open_btc_markets_cached():
-    return cached("kalshi_open_btc", 8, _discover_open_btc_markets)
+    return cached("kalshi_open_btc", 5, _discover_open_btc_markets)
 
 
 def get_kalshi_market(ticker):
@@ -522,13 +573,18 @@ def chop_ratio(btc):
 
 
 def compute_direction(blended_up, p_up, target_p, momentum_up, momentum_down,
-                      r3, r5, up_edge, down_edge, minutes_left, chop, w_model, w_hist):
+                      r3, r5, up_edge, down_edge, minutes_left, chop, w_model, w_hist,
+                      flow=None, ai=None):
     """Tiered direction check with conviction scoring.
 
-    conviction in [-1, 1] = 0.5*probability + 0.25*momentum + 0.25*edge.
+    conviction in [-1, 1] = 0.45*probability + 0.20*momentum + 0.20*edge
+                          + 0.15*extra, where extra blends microstructure flow
+                          and the AI reader vote (whichever is available).
     Tiers: |conv| >= 0.55 -> STRONG LEAN, >= 0.28 (0.45 when choppy) -> LEAN, else WAIT.
     Hard vetos: negative edge vs the ask, <30s to expiry. Model/history
-    disagreement caps conviction at LEAN level.
+    disagreement caps conviction at LEAN level; strong AI disagreement does too.
+    `flow` is a dict from flow_signals.get_flow_signals (may be None).
+    `ai` is a dict from ai_reader.get_ai_read (may be None).
     Returns (label, cls, tier, reason, min_edge, conviction, components).
     """
     min_edge = 8.0 if minutes_left < 3 else (5.0 if minutes_left < 8 else 3.0)
@@ -557,13 +613,46 @@ def compute_direction(blended_up, p_up, target_p, momentum_up, momentum_down,
     comp["mom_score"] = float(mom_align)
     comp["edge_score"] = float(edge_align)
 
+    # --- extra vote: microstructure flow + AI reader (direction-relative) ---
+    extra_parts = {}
+    flow_score, flow_parts = (0.0, {})
+    if flow:
+        flow_score, flow_parts = flow_score_direction_relative(flow, direction)
+        if flow_parts:
+            extra_parts["flow"] = float(flow_score)
+    comp["flow_score"] = float(flow_score) if flow_parts else None
+    # raw (not direction-relative) parts for honest display in the Why panel
+    raw_parts = {}
+    for k in ("book_imb", "trade_flow", "kalshi_book_imb"):
+        if flow and flow.get(k) is not None:
+            raw_parts[{"book_imb": "book", "trade_flow": "flow",
+                       "kalshi_book_imb": "kbook"}[k]] = float(flow[k])
+    comp["flow_parts"] = raw_parts or None
+    comp["funding_ann"] = _f((flow or {}).get("funding_ann"))
+    comp["oi_chg_15m"] = _f((flow or {}).get("oi_chg_15m"))
+
+    ai_align = 0.0
+    ai_vote = None
+    if ai and ai.get("p_up") is not None:
+        ai_vote = float(ai["p_up"])
+        raw = max(-1.0, min(1.0, (ai_vote - 0.5) * 2 / 0.6))
+        ai_align = raw * direction * (0.4 + 0.6 * float(ai.get("confidence", 0.5)))
+        extra_parts["ai"] = float(ai_align)
+    comp["ai_p_up"] = ai_vote
+    comp["ai_confidence"] = _f(ai.get("confidence")) if ai else None
+    comp["ai_align"] = float(ai_align) if ai_vote is not None else None
+
+    extra = sum(extra_parts.values()) / len(extra_parts) if extra_parts else 0.0
+    comp["extra_score"] = float(extra) if extra_parts else None
+
     # hard veto: never lean into a negative edge vs the Kalshi ask
     if edge_here is not None and edge_here < 0:
         reason = (f"Negative edge ({edge_here:+.1f}c) vs the Kalshi ask - no lean "
                   f"even though probability is {blended_up:.0%}.")
         return ("WAIT / NO CLEAR EDGE", "wait", "wait", reason, min_edge, 0.0, comp)
 
-    conviction = max(0.0, 0.5 * prob_align + 0.25 * mom_align + 0.25 * edge_align)
+    conviction = max(0.0, 0.45 * prob_align + 0.20 * mom_align + 0.20 * edge_align
+                       + 0.15 * extra)
 
     # model/history disagreement caps conviction at LEAN level
     disagree = (p_up - 0.5) * (target_p - 0.5) < 0 and abs(p_up - target_p) > 0.10
@@ -572,6 +661,14 @@ def compute_direction(blended_up, p_up, target_p, momentum_up, momentum_down,
     if disagree:
         conviction = min(0.45, conviction)
         cap_note = " Model and history disagree - sized down from STRONG."
+
+    # strong AI disagreement with the quant lean also caps at LEAN
+    ai_disagree = (ai_vote is not None and (ai_vote - 0.5) * direction < 0
+                   and abs(ai_vote - 0.5) > 0.12)
+    comp["ai_disagree"] = bool(ai_disagree)
+    if ai_disagree:
+        conviction = min(0.45, conviction)
+        cap_note += " AI reader disagrees with the quant lean - sized down from STRONG."
 
     # chop filter: demand stronger conviction when the market is whipping
     need = 0.45 if chop > 2.0 else 0.28
@@ -596,9 +693,14 @@ def compute_direction(blended_up, p_up, target_p, momentum_up, momentum_down,
         return ("WAIT / NO CLEAR EDGE", "wait", "wait", reason + cap_note,
                 min_edge, signed, comp)
 
+    extras_txt = ""
+    if comp.get("flow_score") is not None:
+        extras_txt += f", flow {comp['flow_score']:+.2f}"
+    if ai_vote is not None:
+        extras_txt += f", AI {ai_vote:.0%} up"
     reason = (f"Model {p_up:.0%} vs history {target_p:.0%} "
               f"(blend {w_model:.0%}/{w_hist:.0%}), momentum {comp['momentum']}, "
-              f"edge {edge_here:+.1f}c vs {min_edge:.0f}c needed, "
+              f"edge {edge_here:+.1f}c vs {min_edge:.0f}c needed{extras_txt}, "
               f"conviction {signed:+.2f}.{cap_note}")
     cls = "up" if direction > 0 else "down"
     return (label, cls, tier, reason, min_edge, signed, comp)
@@ -1021,9 +1123,46 @@ def compute_state(force_ticker="", target_override=0.0, history=750, selected_ti
     momentum_down = r3 < 0 and r5 < 0
     chop = chop_ratio(btc)
 
+    # --- extra prediction sources: microstructure flow + AI reader ---
+    try:
+        flow = get_flow_signals(ticker_selected)
+    except Exception:
+        flow = None
+    if flow is not None:
+        r15 = float(close_series.pct_change(15).iloc[-1] * 100) if len(close_series) >= 16 else 0.0
+        flow["_r15_fallback"] = r15
+    ai_snapshot = {
+        "btc_price": round(current, 1), "target": round(target, 1),
+        "minutes_left": round(minutes_left, 1),
+        "above_target": bool(current > target),
+        "r1_pct": round(r1, 3), "r3_pct": round(r3, 3), "r5_pct": round(r5, 3),
+        "model_p_up": round(p_up, 3), "history_p_up": round(target_p, 3),
+        "blended_p_up": round(blended_up, 3),
+        "up_edge_c": round(up_edge, 1) if up_edge is not None else None,
+        "down_edge_c": round(down_edge, 1) if down_edge is not None else None,
+        "up_ask_c": up_ask, "down_ask_c": down_ask,
+        "up_bid_c": up_bid, "down_bid_c": down_bid,
+        "book_imbalance": _f((flow or {}).get("book_imb")),
+        "trade_flow": _f((flow or {}).get("trade_flow")),
+        "kalshi_book_imb": _f((flow or {}).get("kalshi_book_imb")),
+        "funding_ann_pct": round((flow or {}).get("funding_ann") * 100, 2)
+                            if (flow or {}).get("funding_ann") is not None else None,
+        "oi_chg_15m_pct": round((flow or {}).get("oi_chg_15m") * 100, 2)
+                            if (flow or {}).get("oi_chg_15m") is not None else None,
+        "chop_ratio": round(chop, 2),
+    }
+    try:
+        ai = get_ai_read(ticker_selected, ai_snapshot)
+    except Exception:
+        ai = None
+
     label, cls, tier, reason, min_edge, conviction, comp = compute_direction(
         blended_up, p_up, target_p, momentum_up, momentum_down,
-        r3, r5, up_edge, down_edge, minutes_left, chop, w_model, w_hist)
+        r3, r5, up_edge, down_edge, minutes_left, chop, w_model, w_hist,
+        flow=flow, ai=ai)
+    state["flow"] = {k: _f(v) for k, v in (flow or {}).items() if not k.startswith("_")}
+    state["ai"] = ai
+    state["ai_enabled"] = ai_configured()
     prob_bar = 0.65 if minutes_left < 3 else 0.60
     state["signal"] = {
         "label": label, "cls": cls, "tier": tier, "girl": GIRL_FOR_CLS[cls],
@@ -1075,7 +1214,7 @@ def compute_state(force_ticker="", target_override=0.0, history=750, selected_ti
 # Routes
 # --------------------------------------------------------------------------
 _state_cache = {"ts": 0.0, "key": None, "data": None}
-STATE_TTL = 8  # seconds: repeat polls inside this window reuse the last result
+STATE_TTL = 5  # seconds: repeat polls inside this window reuse the last result
 
 
 @app.route("/api/state")
@@ -1108,18 +1247,14 @@ def api_state():
 @app.route("/api/quick")
 @subscriber_required
 def api_quick():
-    """Lightweight price tick — no model training. Safe to poll every few seconds."""
+    """Instant price tick — own 2s TTL so 1s polling shows fresh prices."""
     try:
-        btc, data_source, _ = get_market_klines_cached(limit=1000)
-        btc = btc.dropna(subset=["close"])
-        current = float(btc["close"].iloc[-1])
-        last_ret = float(btc["close"].pct_change().iloc[-1] * 100)
+        price, data_source = get_spot_price()
         return jsonify({
             "ok": True,
-            "price": current,
-            "change_1m_pct": last_ret,
+            "price": price,
+            "change_1m_pct": spot_change_1m_pct(),
             "source": data_source,
-            "candle_time": btc.index[-1].strftime("%H:%M:%S"),
         })
     except Exception as e:
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"})
@@ -1208,7 +1343,7 @@ def api_candles():
 
 @app.route("/api/version")
 def api_version():
-    return jsonify({"version": "v16"})
+    return jsonify({"version": "v19"})
 
 
 @app.route("/")
@@ -1265,5 +1400,5 @@ if __name__ == "__main__":
     # Locally it isn't -> loopback only, same as before.
     port = int(os.environ.get("PORT", "5000"))
     host = "0.0.0.0" if "PORT" in os.environ else "127.0.0.1"
-    print(f"Threaded v16 - serving on http://{host}:{port}")
+    print(f"Threaded v18 - serving on http://{host}:{port}")
     app.run(host=host, port=port, threaded=True)

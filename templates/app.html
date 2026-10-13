@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Threaded — BTC 15-Minute Analyzer</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧵</text></svg>">
-<link rel="stylesheet" href="/static/styles.css?v=16">
+<link rel="stylesheet" href="/static/styles.css?v=18">
 </head>
 <body>
 <div id="bg-image"></div>
@@ -15,7 +15,7 @@
   <a class="brand" href="/app">
     <img class="brand-logo" src="/static/img/threaded_logo.webp" alt="Threaded logo">
     <span class="brand-name">Threaded</span>
-    <span class="ver-tag">v16</span>
+    <span class="ver-tag">v18</span>
   </a>
   <div class="price-chip">
     <span class="live-dot" id="live-dot" title="live"></span>
@@ -51,7 +51,9 @@
     </label>
     <label>Refresh
       <select id="refresh-select">
-        <option value="5" selected>5s</option>
+        <option value="2">2s</option>
+        <option value="3" selected>3s</option>
+        <option value="5">5s</option>
         <option value="10">10s</option>
         <option value="15">15s</option>
         <option value="30">30s</option>
@@ -194,6 +196,17 @@
         <div id="why-rows" class="why-rows"></div>
       </div>
 
+      <div id="ai-panel" class="why-panel ai-panel" hidden>
+        <div class="why-head">🤖 AI read <span class="fine" id="ai-model"></span></div>
+        <div class="why-conv"><span>AI vote</span><div class="strength"><div id="ai-fill" class="strength-fill"></div></div><b id="ai-vote">—</b><span class="fine" id="ai-conf"></span></div>
+        <p id="ai-reasoning" class="ai-reasoning"></p>
+        <div class="ai-cols">
+          <div><b class="pos">Bull</b><ul id="ai-bull" class="ai-list"></ul></div>
+          <div><b class="neg">Bear</b><ul id="ai-bear" class="ai-list"></ul></div>
+        </div>
+        <p class="fine">Experimental — one vote among several in the conviction score, not a trade call. Research only.</p>
+      </div>
+
       <h3>💰 When to buy / when to sell</h3>
       <p class="fine">Live checklist from the current signal, edge, momentum, spread and countdown. Research only — not financial advice.</p>
       <div id="projection-panel" class="proj-panel" hidden>
@@ -298,9 +311,9 @@
 
 <footer>
   <b>🧵 Threaded</b> · Made with 💜 by Yuki · Research only, <b>not financial advice</b>. Verify everything on Kalshi before trading.
-  <span class="ver-badge">v16 · Embedded</span>
+  <span class="ver-badge">v18 · Instant</span>
 </footer>
 
-<script src="/static/app.js?v=16"></script>
+<script src="/static/app.js?v=18"></script>
 </body>
 </html>

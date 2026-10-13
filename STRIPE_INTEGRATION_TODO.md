@@ -39,9 +39,16 @@ These parameters were configured in Checkout Studio and are already set correctl
 | phone_number_collection | {"enabled": false} |
 | automatic_tax | {"enabled": false} |
 | payment_method_collection | always |
+| payment_method_types | ["card", "cashapp"] |
 | submit_type | auto |
 | integration_identifier | custom_embedded_web_0001 |
 | line_items | app's real Price IDs per plan (daily / monthly / yearly) |
+
+## Post-Studio change (user request, 2026-10-13)
+`payment_method_types=["card", "cashapp"]` was added to the Session call —
+this was NOT part of the Checkout Studio field intents. Google Pay needs no
+code: Stripe Checkout shows it automatically alongside cards on supported
+browsers/devices. Cash App Pay also needs a dashboard toggle (see below).
 
 ## Setup and next steps
 

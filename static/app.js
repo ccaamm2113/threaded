@@ -1,7 +1,7 @@
 /* BTC 15-Minute Kalshi Analyzer — frontend */
 const S = {
   forceTicker: "", ticker: "", targetOverride: "",
-  history: 750, refreshSec: 5, paused: false,
+  history: 750, refreshSec: 3, paused: false,
   closeEpochMs: null, markets: [], timer: null, quickTimer: null, countdownTimer: null,
   lastStateAt: null,
 };
@@ -65,10 +65,14 @@ async function pollQuick() {
     if (!d.ok) return;
     $("btc-price").textContent = money(d.price);
     const ch = $("btc-change");
-    ch.textContent = (d.change_1m_pct >= 0 ? "+" : "") + d.change_1m_pct.toFixed(3) + "% last minute";
-    ch.className = "card-sub " + (d.change_1m_pct >= 0 ? "pos" : "neg");
+    if (d.change_1m_pct == null) {
+      ch.textContent = "warming up…";
+      ch.className = "card-sub";
+    } else {
+      ch.textContent = (d.change_1m_pct >= 0 ? "+" : "") + d.change_1m_pct.toFixed(3) + "% last minute";
+      ch.className = "card-sub " + (d.change_1m_pct >= 0 ? "pos" : "neg");
+    }
     $("btc-source-label").textContent = "BTC spot (" + d.source + ")";
-    $("candle-time").textContent = d.candle_time;
   } catch (e) { /* silent: full poll will surface real errors */ }
 }
 
@@ -176,6 +180,9 @@ function renderKalshi(d) {
   // conviction breakdown
   renderWhy(d);
 
+  // AI read
+  renderAI(d);
+
   // projected spike
   renderProjection(d);
 
@@ -254,8 +261,40 @@ function renderWhy(d) {
     ["Regime", c.choppy ? "choppy (" + c.chop_ratio.toFixed(1) + "× norm)" : "normal (" + c.chop_ratio.toFixed(1) + "×)", c.choppy ? "down" : ""],
   ];
   if (c.disagree) rows.push(["Note", "model and history disagree — capped at LEAN", ""]);
+  // extra prediction sources: microstructure flow
+  const fp = c.flow_parts || {};
+  const ffmt = (v) => (v >= 0 ? "+" : "") + Math.round(v * 100) + "%";
+  if (fp.book != null) rows.push(["Order book", "bids " + ffmt(fp.book) + " vs asks", fp.book >= 0 ? "up" : "down"]);
+  if (fp.flow != null) rows.push(["Trade flow", "taker " + ffmt(fp.flow), fp.flow >= 0 ? "up" : "down"]);
+  if (fp.kbook != null) rows.push(["Kalshi book", "YES depth " + ffmt(fp.kbook), fp.kbook >= 0 ? "up" : "down"]);
+  if (c.funding_ann != null) {
+    const f = c.funding_ann * 100;
+    rows.push(["Perp funding", (f >= 0 ? "+" : "") + f.toFixed(1) + "%/yr" + (Math.abs(f) > 25 ? " (crowded)" : ""), Math.abs(f) > 25 ? (f > 0 ? "down" : "up") : ""]);
+  }
+  if (c.oi_chg_15m != null) rows.push(["Open interest Δ15m", (c.oi_chg_15m >= 0 ? "+" : "") + (c.oi_chg_15m * 100).toFixed(1) + "%", ""]);
+  if (c.ai_p_up != null) {
+    rows.push(["AI vote", pct1(c.ai_p_up) + " up · conf " + Math.round((c.ai_confidence || 0) * 100) + "%", c.ai_p_up >= 0.5 ? "up" : "down"]);
+    if (c.ai_disagree) rows.push(["Note", "AI reader disagrees — capped at LEAN", ""]);
+  }
   $("why-rows").innerHTML = rows.map((r) =>
     '<div class="why-row"><span>' + r[0] + '</span><b class="' + dot(r[2]) + '">' + r[1] + "</b></div>").join("");
+}
+
+function renderAI(d) {
+  const panel = $("ai-panel");
+  const a = d.ai;
+  if (!a || a.p_up == null) { panel.hidden = true; return; }
+  panel.hidden = false;
+  const v = Math.round(a.p_up * 100);
+  $("ai-vote").textContent = v + "% UP";
+  $("ai-vote").className = a.p_up >= 0.5 ? "pos" : "neg";
+  $("ai-fill").style.width = v + "%";
+  $("ai-fill").style.background = a.p_up >= 0.5 ? "var(--up)" : "var(--down)";
+  $("ai-conf").textContent = "· confidence " + Math.round((a.confidence || 0) * 100) + "%";
+  $("ai-model").textContent = "· " + (a.model || "ai");
+  $("ai-reasoning").textContent = a.reasoning || "";
+  $("ai-bull").innerHTML = (a.bull || []).map((x) => "<li>" + x + "</li>").join("");
+  $("ai-bear").innerHTML = (a.bear || []).map((x) => "<li>" + x + "</li>").join("");
 }
 
 function renderEntryExit(d) {
@@ -442,7 +481,7 @@ function restartPoll() {
   if (S.timer) clearInterval(S.timer);
   if (S.quickTimer) clearInterval(S.quickTimer);
   S.timer = setInterval(pollState, S.refreshSec * 1000);
-  S.quickTimer = setInterval(pollQuick, 2000);
+  S.quickTimer = setInterval(pollQuick, 1000);
 }
 
 /* ---------- boot ---------- */
