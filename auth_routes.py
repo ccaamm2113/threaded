@@ -32,7 +32,8 @@ def signup():
             try:
                 send_verification(u)
                 db.session.commit()
-            except Exception:
+            except Exception as e:
+                print(f"[MAIL] send_verification failed for {email}: {e}", flush=True)
                 db.session.rollback()
             login_user(u)
             return redirect(url_for("auth.verify_pending"))
@@ -68,8 +69,11 @@ def resend_verification():
         try:
             send_verification(current_user)
             db.session.commit()
-        except Exception:
+        except Exception as e:
+            print(f"[MAIL] resend-verification failed: {e}", flush=True)
             db.session.rollback()
+            return render_template("verify_pending.html", email=current_user.email,
+                                   error="Couldn't send the email — Resend may not be configured correctly.")
     return redirect(url_for("auth.verify_pending"))
 
 
@@ -107,7 +111,8 @@ def forgot_password():
             try:
                 send_password_reset(u)
                 db.session.commit()
-            except Exception:
+            except Exception as e:
+                print(f"[MAIL] password-reset failed for {email}: {e}", flush=True)
                 db.session.rollback()
         sent = True  # same message either way: no account enumeration
     return render_template("forgot.html", sent=sent)

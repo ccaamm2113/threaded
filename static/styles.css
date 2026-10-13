@@ -6,8 +6,8 @@
   --card: rgba(255,255,255,.06); --card-border: rgba(255,255,255,.12);
 }
 * { box-sizing: border-box; }
-#bg-video { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-  object-fit: cover; z-index: -2; }
+#bg-image { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: -2;
+  background: url('/static/img/tokyo_starlight_bg.jpg') center / cover no-repeat fixed; }
 .bg-overlay { position: fixed; inset: 0; z-index: -1;
   background: linear-gradient(135deg, rgba(15,12,41,.84) 0%, rgba(48,43,99,.80) 50%, rgba(36,36,62,.86) 100%); }
 body {

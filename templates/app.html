@@ -8,14 +8,12 @@
 <link rel="stylesheet" href="/static/styles.css?v=10">
 </head>
 <body>
-<video id="bg-video" autoplay muted loop playsinline>
-  <source src="/static/img/tokyo_drive_bg.mp4" type="video/mp4">
-</video>
+<div id="bg-image"></div>
 <div class="bg-overlay"></div>
 
 <header class="topbar">
   <div class="topbar-text">
-    <h1 class="hero-title"><img class="brand-logo" src="/static/img/threaded_logo.webp" alt="Threaded logo"> Threaded <span class="ver-tag">v12</span></h1>
+    <h1 class="hero-title"><img class="brand-logo" src="/static/img/threaded_logo.webp" alt="Threaded logo"> Threaded <span class="ver-tag">v13</span></h1>
     <p class="subtitle">BTC 15-minute Kalshi market analyzer — research dashboard only. Estimates probabilities; it does not place trades or guarantee outcomes. Featuring Yuki, your trading copilot!</p>
     <p class="fine">{% if current_user.is_authenticated %}{{ current_user.email }} · <a href="/billing">Billing</a> · <a href="/logout">Log out</a>{% else %}<a href="/login">Log in</a>{% endif %}</p>
   </div>
@@ -285,7 +283,7 @@
 
 <footer>
   <b>🧵 Threaded</b> · Made with 💜 by Yuki · Research only, <b>not financial advice</b>. Verify everything on Kalshi before trading.
-  <span class="ver-badge">v12 · Tokyo nights</span>
+  <span class="ver-badge">v13 · Starlight</span>
 </footer>
 
 <script src="/static/app.js?v=10"></script>

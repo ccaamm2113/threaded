@@ -19,9 +19,8 @@
 .feat h3 { margin: 0 0 8px; }
 .feat p { color: var(--muted); margin: 0; font-size: .95rem; }
 .pricing { max-width: 520px; margin: 50px auto; padding: 0 20px; text-align: center; }
-.price-card { background: var(--card); border: 2px solid #818cf8; border-radius: 16px; padding: 30px;
-  box-shadow: 0 0 40px rgba(129,140,248,.25); }
-.price-card .amount { font-size: 3rem; font-weight: 800; }
+.price-card { background: var(--card); border: 1px solid var(--card-border); border-radius: 16px; padding: 24px; }
+.price-card .amount { font-size: 2.2rem; font-weight: 800; }
 .faq { max-width: 720px; margin: 40px auto 60px; padding: 0 20px; }
 .faq details { background: var(--card); border: 1px solid var(--card-border); border-radius: 10px;
   padding: 12px 16px; margin-bottom: 10px; }
@@ -36,7 +35,7 @@
   {% if current_user.is_authenticated and current_user.is_subscriber %}
     <a class="cta" href="/app">Open the dashboard →</a>
   {% else %}
-    <a class="cta" href="/signup">Get Threaded Pro — {{ plan_price }}</a>
+    <a class="cta" href="/signup">Get access →</a>
   {% endif %}
   <p class="fine" style="margin-top:14px">Join the Discord for free teasers 👇</p>
 </div>
@@ -50,6 +49,14 @@
   <div class="feat"><h3>📊 Spike projections</h3><p>Rough expected move over the time left, so you know whether the target is even reachable.</p></div>
   <div class="feat"><h3>⚡ 2-second refresh</h3><p>Live price ticks every 2 seconds, full analysis every 5. The market doesn't wait and neither do you.</p></div>
   <div class="feat"><h3>💜 Yuki</h3><p>Your anime trading copilot. Bullish, bearish or chill — she matches the market's mood.</p></div>
+</div>
+
+<div class="faq">
+  <h2 style="text-align:center">FAQ</h2>
+  <details><summary>Is this financial advice?</summary><p class="fine">No. Threaded is a research tool that estimates probabilities. Nothing here is financial advice, and past signals don't predict future results. Never trade money you can't afford to lose.</p></details>
+  <details><summary>How does the Discord fit in?</summary><p class="fine">The Discord is our free community — teasers, discussion and Yuki memes. Subscribers get a special role and the full live dashboard here.</p></details>
+  <details><summary>Can I cancel?</summary><p class="fine">Anytime, from the Billing page. You keep access until the end of your billing period.</p></details>
+  <details><summary>Does it place trades for me?</summary><p class="fine">No — Threaded never touches your money or your Kalshi account. You always place your own trades.</p></details>
 </div>
 
 <div class="pricing" id="pricing">
@@ -66,17 +73,9 @@
     {% if current_user.is_authenticated and current_user.is_subscriber %}
       <a class="cta" href="/app">Open the dashboard →</a>
     {% else %}
-      <a class="cta" href="/signup">Subscribe now</a>
+      <a class="cta" href="/signup">Get started</a>
     {% endif %}
   </div>
-</div>
-
-<div class="faq">
-  <h2 style="text-align:center">FAQ</h2>
-  <details><summary>Is this financial advice?</summary><p class="fine">No. Threaded is a research tool that estimates probabilities. Nothing here is financial advice, and past signals don't predict future results. Never trade money you can't afford to lose.</p></details>
-  <details><summary>How does the Discord fit in?</summary><p class="fine">The Discord is our free community — teasers, discussion and Yuki memes. Subscribers get a special role and the full live dashboard here.</p></details>
-  <details><summary>Can I cancel?</summary><p class="fine">Anytime, from the Billing page. You keep access until the end of your billing period.</p></details>
-  <details><summary>Does it place trades for me?</summary><p class="fine">No — Threaded never touches your money or your Kalshi account. You always place your own trades.</p></details>
 </div>
 
 <p class="disclaimer"><b>Risk disclaimer:</b> Trading binary contracts on Kalshi involves substantial risk of loss. Threaded's signals are probabilistic estimates, not guarantees. This site is for research and education only and is not financial advice. By subscribing you agree to the <a href="/terms">Terms</a>.</p>
