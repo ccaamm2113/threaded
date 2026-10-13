@@ -7,5 +7,5 @@ scikit-learn>=1.6
 gunicorn>=23.0
 Flask-Login>=0.6
 Flask-SQLAlchemy>=3.1
-psycopg2-binary>=3.1
+psycopg[binary]>=3.1
 stripe>=10.0
