@@ -11,6 +11,8 @@ billing_bp = Blueprint("billing", __name__)
 
 def _stripe():
     stripe.api_key = config.STRIPE_SECRET_KEY
+    # Pinned for the embedded custom checkout form (dahlia preview).
+    stripe.api_version = "2026-03-25.dahlia; custom_checkout_payment_form_preview=v1"
     return stripe
 
 
@@ -48,6 +50,7 @@ def billing():
         except Exception:
             pass
     return render_template("billing.html", error=request.args.get("error"),
+                           stripe_pk=config.STRIPE_PUBLISHABLE_KEY,
                            plans=[{"key": k, "price": v[1], "blurb": v[2],
                                    "ready": bool(v[0])}
                                   for k, v in _plans().items()])
@@ -56,25 +59,34 @@ def billing():
 @billing_bp.route("/subscribe", methods=["POST"])
 @login_required
 def subscribe():
-    plan = request.form.get("plan", "monthly")
+    """Create an embedded-form Checkout Session; returns {client_secret} as JSON."""
+    payload = request.get_json(silent=True) or {}
+    plan = payload.get("plan") or request.form.get("plan", "monthly")
     price_id = _plans().get(plan, (None,))[0]
     if not config.STRIPE_SECRET_KEY or not price_id:
-        return redirect(url_for("billing.billing", error="That plan isn't configured yet."))
+        return jsonify({"error": "That plan isn't configured yet."}), 400
     _stripe()
     if not current_user.stripe_customer_id:
         cust = stripe.Customer.create(email=current_user.email,
                                       metadata={"user_id": current_user.id})
         current_user.stripe_customer_id = cust.id
         db.session.commit()
+    # fixed_by_ui params come from Checkout Studio; mode/line_items keep the
+    # app's real recurring-subscription values (Scenario A: preserve them).
     session = stripe.checkout.Session.create(
-        customer=current_user.stripe_customer_id,
+        ui_mode="form",
         mode="subscription",
         line_items=[{"price": price_id, "quantity": 1}],
-        success_url=config.APP_URL.rstrip("/") + "/billing?subscribed=1",
-        cancel_url=config.APP_URL.rstrip("/") + "/billing?cancelled=1",
+        customer=current_user.stripe_customer_id,
+        billing_address_collection="auto",
+        phone_number_collection={"enabled": False},
+        automatic_tax={"enabled": False},
+        payment_method_collection="always",
+        submit_type="auto",
+        integration_identifier="custom_embedded_web_0001",
         metadata={"user_id": current_user.id},
     )
-    return redirect(session.url, code=303)
+    return jsonify({"client_secret": session.client_secret})
 
 
 @billing_bp.route("/billing/portal", methods=["POST"])
