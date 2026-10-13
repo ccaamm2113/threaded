@@ -1,13 +1,45 @@
 services:
   - type: web
-    name: btc-kalshi-15m-platform
+    name: threaded-btc-analyzer
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn server:app
+    startCommand: gunicorn server:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
     envVars:
-      - key: PORT
-        value: 10000
+      - key: PYTHON_VERSION
+        value: 3.11.0
       - key: SECRET_KEY
         generateValue: true
-      - key: PYTHON_VERSION
-        value: 3.10.12
+      - key: APP_URL
+        value: https://threaded-btc-analyzer.onrender.com
+      # --- database: use a free Postgres (Neon/Supabase) so accounts survive restarts ---
+      - key: DATABASE_URL
+        sync: false
+      # --- Stripe (fill in from your Stripe dashboard; use test keys first) ---
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PUBLISHABLE_KEY
+        sync: false
+      - key: STRIPE_PRICE_ID
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      # --- Discord automation (see DISCORD.md) ---
+      - key: DISCORD_BOT_TOKEN
+        sync: false
+      - key: DISCORD_GUILD_ID
+        sync: false
+      - key: DISCORD_SUBSCRIBER_ROLE_ID
+        sync: false
+      - key: DISCORD_TEASER_WEBHOOK
+        sync: false
+      - key: TEASER_SECRET
+        generateValue: true
+      # --- Email (Resend) + admin ---
+      - key: MAIL_PROVIDER
+        value: resend
+      - key: RESEND_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        value: Threaded <noreply@threaded.com>
+      - key: ADMIN_EMAILS
+        sync: false
