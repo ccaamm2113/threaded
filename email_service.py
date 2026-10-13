@@ -17,7 +17,18 @@ def send_email(to, subject, html):
             json={"from": config.MAIL_FROM, "to": [to],
                   "subject": subject, "html": html},
             timeout=15)
-        r.raise_for_status()
+        try:
+            r.raise_for_status()
+        except requests.HTTPError:
+            # Surface Resend's own error message (e.g. bad key, unverified
+            # domain) instead of a bare status code, so the [MAIL] log line
+            # is actionable.
+            body = ""
+            try:
+                body = r.text[:300]
+            except Exception:
+                pass
+            raise RuntimeError(f"Resend HTTP {r.status_code}: {body}")
         return True
     # console fallback: log it so devs can click it
     print(f"\n[MAIL console] To: {to}\nSubject: {subject}\n{html}\n", flush=True)

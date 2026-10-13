@@ -14,6 +14,18 @@ def _stripe():
     return stripe
 
 
+def _plans():
+    """plan_key -> (stripe price id, display price, blurb)."""
+    return {
+        "daily": (config.STRIPE_PRICE_ID_DAILY, config.PLAN_PRICE_DISPLAY_DAILY,
+                  "per day · cancel anytime"),
+        "monthly": (config.STRIPE_PRICE_ID, config.PLAN_PRICE_DISPLAY,
+                    "per month · cancel anytime"),
+        "yearly": (config.STRIPE_PRICE_ID_YEARLY, config.PLAN_PRICE_DISPLAY_YEARLY,
+                   "per year · cancel anytime"),
+    }
+
+
 @billing_bp.route("/billing")
 @login_required
 def billing():
@@ -36,16 +48,18 @@ def billing():
         except Exception:
             pass
     return render_template("billing.html", error=request.args.get("error"),
-                           plan_price=config.PLAN_PRICE_DISPLAY)
+                           plans=[{"key": k, "price": v[1], "blurb": v[2],
+                                   "ready": bool(v[0])}
+                                  for k, v in _plans().items()])
 
 
 @billing_bp.route("/subscribe", methods=["POST"])
 @login_required
 def subscribe():
-    if not current_user.email_verified:
-        return redirect(url_for("auth.verify_pending"))
-    if not config.STRIPE_SECRET_KEY or not config.STRIPE_PRICE_ID:
-        return redirect(url_for("billing.billing", error="Payments aren't configured yet."))
+    plan = request.form.get("plan", "monthly")
+    price_id = _plans().get(plan, (None,))[0]
+    if not config.STRIPE_SECRET_KEY or not price_id:
+        return redirect(url_for("billing.billing", error="That plan isn't configured yet."))
     _stripe()
     if not current_user.stripe_customer_id:
         cust = stripe.Customer.create(email=current_user.email,
@@ -55,7 +69,7 @@ def subscribe():
     session = stripe.checkout.Session.create(
         customer=current_user.stripe_customer_id,
         mode="subscription",
-        line_items=[{"price": config.STRIPE_PRICE_ID, "quantity": 1}],
+        line_items=[{"price": price_id, "quantity": 1}],
         success_url=config.APP_URL.rstrip("/") + "/billing?subscribed=1",
         cancel_url=config.APP_URL.rstrip("/") + "/billing?cancelled=1",
         metadata={"user_id": current_user.id},

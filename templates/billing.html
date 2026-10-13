@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Billing — Threaded{% endblock %}
 {% block content %}
-<div class="auth-wrap" style="max-width:520px">
+<div class="auth-wrap" style="max-width:640px">
   <h2>💳 Billing</h2>
   {% if error %}<div class="auth-err">{{ error }}</div>{% endif %}
   {% if current_user.is_subscriber %}
@@ -11,11 +11,23 @@
     </form>
     <p class="fine">Opens Stripe's secure customer portal.</p>
   {% else %}
-    <p>You're on the free plan — the live dashboard is locked.</p>
-    <form method="post" action="/subscribe">
-      <button class="btn" type="submit">Subscribe — {{ plan_price }}/mo</button>
-    </form>
-    <p class="fine">Secure checkout via Stripe. Cancel anytime.</p>
+    <p>You're on the free plan — the live dashboard is locked. Pick a plan:</p>
+    <div class="cards3" style="margin-top:14px">
+      {% for p in plans %}
+      <div class="card" style="text-align:center">
+        <div class="card-label">{{ p.key|capitalize }}</div>
+        <div class="card-value">{{ p.price }}</div>
+        <div class="card-sub">{{ p.blurb }}</div>
+        <form method="post" action="/subscribe" style="margin-top:12px">
+          <input type="hidden" name="plan" value="{{ p.key }}">
+          <button class="btn" type="submit" {% if not p.ready %}disabled style="opacity:.4;cursor:not-allowed"{% endif %}>
+            {% if p.ready %}Choose {{ p.key }}{% else %}Coming soon{% endif %}
+          </button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="fine" style="margin-top:14px">Secure checkout via Stripe. Cancel anytime from the customer portal.</p>
   {% endif %}
 </div>
 {% endblock %}

@@ -56,10 +56,6 @@ def subscriber_required(fn):
             if is_api:
                 return jsonify({"ok": False, "error": "login required"}), 401
             return redirect("/login?next=" + request.path)
-        if not current_user.email_verified:
-            if is_api:
-                return jsonify({"ok": False, "error": "email verification required"}), 403
-            return redirect("/verify-pending")
         if not current_user.is_subscriber:
             if is_api:
                 return jsonify({"ok": False, "error": "subscription required"}), 402
@@ -1212,12 +1208,16 @@ def api_candles():
 
 @app.route("/api/version")
 def api_version():
-    return jsonify({"version": "v14"})
+    return jsonify({"version": "v15"})
 
 
 @app.route("/")
 def index():
-    return render_template("landing.html", plan_price=config.PLAN_PRICE_DISPLAY)
+    return render_template("landing.html",
+                           plan_price=config.PLAN_PRICE_DISPLAY,
+                           plan_price_yearly=config.PLAN_PRICE_DISPLAY_YEARLY,
+                           plan_price_daily=config.PLAN_PRICE_DISPLAY_DAILY,
+                           discord_url=config.DISCORD_INVITE_URL)
 
 
 @app.route("/app")
@@ -1265,5 +1265,5 @@ if __name__ == "__main__":
     # Locally it isn't -> loopback only, same as before.
     port = int(os.environ.get("PORT", "5000"))
     host = "0.0.0.0" if "PORT" in os.environ else "127.0.0.1"
-    print(f"Threaded v14 - serving on http://{host}:{port}")
+    print(f"Threaded v15 - serving on http://{host}:{port}")
     app.run(host=host, port=port, threaded=True)

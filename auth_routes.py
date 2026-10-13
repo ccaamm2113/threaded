@@ -27,16 +27,11 @@ def signup():
         else:
             u = User(email=email, discord_username=discord_username)
             u.set_password(pw)
+            u.email_verified = True  # verification removed in v15: active on signup
             db.session.add(u)
             db.session.commit()
-            try:
-                send_verification(u)
-                db.session.commit()
-            except Exception as e:
-                print(f"[MAIL] send_verification failed for {email}: {e}", flush=True)
-                db.session.rollback()
             login_user(u)
-            return redirect(url_for("auth.verify_pending"))
+            return redirect(url_for("billing.billing"))
     return render_template("signup.html", error=error)
 
 

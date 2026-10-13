@@ -11,7 +11,12 @@
   {% else %}
     <a class="cta" href="/signup">Get access →</a>
   {% endif %}
-  <p class="fine hero-note">Join the Discord for free teasers 👇</p>
+  {% if discord_url %}
+  <div style="margin-top:14px">
+    <a href="{{ discord_url }}" target="_blank" rel="noopener" class="btn" style="text-decoration:none; background: linear-gradient(135deg, #5865F2, #7289da);">💬 Join the Discord</a>
+  </div>
+  {% endif %}
+  <p class="fine hero-note">Free teasers, discussion and Yuki memes 👇</p>
 </div>
 
 <div class="thread-hr" aria-hidden="true"><span>🧵</span></div>
@@ -41,23 +46,50 @@
   <details><summary>Does it place trades for me?</summary><p>No — Threaded never touches your money or your Kalshi account. You always place your own trades.</p></details>
 </div>
 
-<div class="pricing" id="pricing">
-  <div class="price-card">
-    <h2>Threaded Pro</h2>
-    <div class="amount">{{ plan_price }}</div>
-    <p class="fine">per month · cancel anytime</p>
-    <ul class="checklist" style="text-align:left; max-width: 320px; margin: 18px auto;">
-      <li>✅ Full live dashboard</li>
-      <li>✅ Direction + buy/sell + scalp signals</li>
-      <li>✅ Subscriber role in the Discord</li>
-      <li>✅ Cancel anytime, no lock-in</li>
-    </ul>
-    {% if current_user.is_authenticated and current_user.is_subscriber %}
-      <a class="cta" href="/app">Open the dashboard →</a>
-    {% else %}
-      <a class="cta" href="/signup">Get started</a>
-    {% endif %}
+<div class="pricing" id="pricing" style="max-width:720px">
+  <h2 class="section-title">Simple pricing</h2>
+  <p class="section-sub">Pick the rhythm that fits. Cancel anytime.</p>
+  <div class="cards3" style="margin-top:18px">
+    <div class="price-card">
+      <h3 style="margin-top:0">Daily</h3>
+      <div class="amount">{{ plan_price_daily }}</div>
+      <p class="fine">per day · cancel anytime</p>
+      {% if current_user.is_authenticated and current_user.is_subscriber %}
+        <a class="cta" href="/app">Open the dashboard →</a>
+      {% else %}
+        <a class="cta" href="/billing">Get started</a>
+      {% endif %}
+    </div>
+    <div class="price-card" style="border-color: rgba(129,140,248,.55); box-shadow: 0 0 30px rgba(129,140,248,.25);">
+      <h3 style="margin-top:0">Monthly ⭐</h3>
+      <div class="amount">{{ plan_price }}</div>
+      <p class="fine">per month · cancel anytime</p>
+      {% if current_user.is_authenticated and current_user.is_subscriber %}
+        <a class="cta" href="/app">Open the dashboard →</a>
+      {% else %}
+        <a class="cta" href="/billing">Get started</a>
+      {% endif %}
+    </div>
+    <div class="price-card">
+      <h3 style="margin-top:0">Yearly</h3>
+      <div class="amount">{{ plan_price_yearly }}</div>
+      <p class="fine">per year · cancel anytime</p>
+      {% if current_user.is_authenticated and current_user.is_subscriber %}
+        <a class="cta" href="/app">Open the dashboard →</a>
+      {% else %}
+        <a class="cta" href="/billing">Get started</a>
+      {% endif %}
+    </div>
   </div>
+  <ul class="checklist" style="text-align:left; max-width: 340px; margin: 22px auto 0;">
+    <li>✅ Full live dashboard</li>
+    <li>✅ Direction + buy/sell + scalp signals</li>
+    <li>✅ Subscriber role in the Discord</li>
+    <li>✅ Cancel anytime, no lock-in</li>
+  </ul>
+  {% if discord_url %}
+  <p class="fine" style="margin-top:18px">Not ready? <a href="{{ discord_url }}" target="_blank" rel="noopener">Join the free Discord</a> for teasers first.</p>
+  {% endif %}
 </div>
 
 <p class="disclaimer"><b>Risk disclaimer:</b> Trading binary contracts on Kalshi involves substantial risk of loss. Threaded's signals are probabilistic estimates, not guarantees. This site is for research and education only and is not financial advice. By subscribing you agree to the <a href="/terms">Terms</a>.</p>

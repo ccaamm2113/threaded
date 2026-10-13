@@ -14,11 +14,15 @@ DATABASE_URL = _req("DATABASE_URL", "sqlite:///threaded.db")
 STRIPE_SECRET_KEY = _req("STRIPE_SECRET_KEY", "")
 STRIPE_PUBLISHABLE_KEY = _req("STRIPE_PUBLISHABLE_KEY", "")
 STRIPE_PRICE_ID = _req("STRIPE_PRICE_ID", "")          # the monthly subscription Price
+STRIPE_PRICE_ID_YEARLY = _req("STRIPE_PRICE_ID_YEARLY", "")  # yearly subscription Price
+STRIPE_PRICE_ID_DAILY = _req("STRIPE_PRICE_ID_DAILY", "")    # daily subscription Price
 STRIPE_WEBHOOK_SECRET = _req("STRIPE_WEBHOOK_SECRET", "")
 
 # What the landing page advertises (change freely)
 PLAN_NAME = _req("PLAN_NAME", "Threaded Pro")
 PLAN_PRICE_DISPLAY = _req("PLAN_PRICE_DISPLAY", "$29/mo")
+PLAN_PRICE_DISPLAY_YEARLY = _req("PLAN_PRICE_DISPLAY_YEARLY", "$300/yr")
+PLAN_PRICE_DISPLAY_DAILY = _req("PLAN_PRICE_DISPLAY_DAILY", "$10/day")
 
 # Local dev: START_WEBSITE.bat sets DEV_MODE=1 to skip login/paywall locally
 DEV_MODE = _req("DEV_MODE", "0") == "1"
@@ -29,6 +33,9 @@ DISCORD_GUILD_ID = _req("DISCORD_GUILD_ID", "")
 DISCORD_SUBSCRIBER_ROLE_ID = _req("DISCORD_SUBSCRIBER_ROLE_ID", "")
 DISCORD_TEASER_WEBHOOK = _req("DISCORD_TEASER_WEBHOOK", "")
 TEASER_SECRET = _req("TEASER_SECRET", "change-me")
+# Public invite link shown on the landing page (create one in your server:
+# Server Settings -> Invites -> Create Invite, set to never expire)
+DISCORD_INVITE_URL = _req("DISCORD_INVITE_URL", "")
 
 # Email (verification + password reset). Resend is the easiest:
 # sign up at resend.com, verify your domain (or use their test domain),
