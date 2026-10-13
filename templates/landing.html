@@ -1,67 +1,49 @@
 {% extends "base.html" %}
 {% block title %}Threaded — BTC 15-Minute Kalshi Signals{% endblock %}
 {% block content %}
-<style>
-.hero { text-align: center; padding: 9vh 20px 6vh; }
-.hero h1 { font-size: 3rem; margin: 0 0 12px;
-  background: linear-gradient(90deg, #f0abfc, #818cf8, #67e8f9);
-  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-.hero p { color: var(--muted); font-size: 1.15rem; max-width: 640px; margin: 0 auto 26px; }
-.hero-logo { width: 96px; border-radius: 22px; box-shadow: 0 0 30px rgba(129,140,248,.6); margin-bottom: 18px; }
-.cta { display: inline-block; padding: 14px 38px; font-size: 1.15rem; font-weight: 800; border-radius: 999px;
-  background: linear-gradient(90deg, #818cf8, #67e8f9); color: #0f0c29; text-decoration: none;
-  box-shadow: 0 0 24px rgba(129,140,248,.5); }
-.cta:hover { filter: brightness(1.1); }
-.feats { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px;
-  max-width: 1020px; margin: 40px auto; padding: 0 20px; }
-.feat { background: var(--card); border: 1px solid var(--card-border); border-radius: 12px; padding: 18px;
-  outline: 1px dashed rgba(255,255,255,.13); outline-offset: -6px; }
-.feat h3 { margin: 0 0 8px; }
-.feat p { color: var(--muted); margin: 0; font-size: .95rem; }
-.pricing { max-width: 520px; margin: 50px auto; padding: 0 20px; text-align: center; }
-.price-card { background: var(--card); border: 1px solid var(--card-border); border-radius: 16px; padding: 24px; }
-.price-card .amount { font-size: 2.2rem; font-weight: 800; }
-.faq { max-width: 720px; margin: 40px auto 60px; padding: 0 20px; }
-.faq details { background: var(--card); border: 1px solid var(--card-border); border-radius: 10px;
-  padding: 12px 16px; margin-bottom: 10px; }
-.faq summary { cursor: pointer; font-weight: 700; }
-.disclaimer { max-width: 720px; margin: 0 auto 60px; padding: 0 20px; color: var(--muted); font-size: .85rem; }
-</style>
-
-<div class="hero">
+<div class="landing-hero">
   <img class="hero-logo" src="/static/img/threaded_logo.webp" alt="Threaded">
-  <h1>🧵 Threaded</h1>
-  <p>Live BTC 15-minute Kalshi signals — direction conviction, buy/sell timing, scalp meters and spike projections, refreshed every few seconds. Featuring Yuki, your trading copilot.</p>
+  <div class="hero-badge">✦ Live BTC 15-min Kalshi research ✦</div>
+  <h1>Read the next 15 minutes<br>before they happen.</h1>
+  <p class="lede">Threaded fuses a calibrated price model with live Kalshi order-book math — direction conviction, buy/sell timing, scalp meters and spike projections, refreshed every few seconds. With Yuki, your anime trading copilot, reading every tick.</p>
   {% if current_user.is_authenticated and current_user.is_subscriber %}
     <a class="cta" href="/app">Open the dashboard →</a>
   {% else %}
     <a class="cta" href="/signup">Get access →</a>
   {% endif %}
-  <p class="fine" style="margin-top:14px">Join the Discord for free teasers 👇</p>
+  <p class="fine hero-note">Join the Discord for free teasers 👇</p>
 </div>
 
 <div class="thread-hr" aria-hidden="true"><span>🧵</span></div>
 
 <div class="feats">
-  <div class="feat"><h3>🎯 Direction conviction</h3><p>Calibrated model + historical odds blended by time-to-expiry, with a plain-English "why this signal" breakdown.</p></div>
-  <div class="feat"><h3>🟢🔴 Buy / sell timing</h3><p>Entry checklists with confirmation logic and exit triggers — trailing edge, momentum flips, cushion warnings.</p></div>
-  <div class="feat"><h3>⚡ Scalp meters</h3><p>Separate 0–100 long/short scalp scores from edge, momentum, spread and time left. Know when to pounce.</p></div>
-  <div class="feat"><h3>📊 Spike projections</h3><p>Rough expected move over the time left, so you know whether the target is even reachable.</p></div>
-  <div class="feat"><h3>⚡ 2-second refresh</h3><p>Live price ticks every 2 seconds, full analysis every 5. The market doesn't wait and neither do you.</p></div>
-  <div class="feat"><h3>💜 Yuki</h3><p>Your anime trading copilot. Bullish, bearish or chill — she matches the market's mood.</p></div>
+  <div class="feat"><div class="icon">🎯</div><h3>Direction conviction</h3><p>Calibrated model + historical odds blended by time-to-expiry, with a plain-English "why this signal" breakdown.</p></div>
+  <div class="feat"><div class="icon">🟢🔴</div><h3>Buy / sell timing</h3><p>Entry checklists with confirmation logic and exit triggers — trailing edge, momentum flips, cushion warnings.</p></div>
+  <div class="feat"><div class="icon">⚡</div><h3>Scalp meters</h3><p>Separate 0–100 long/short scalp scores from edge, momentum, spread and time left. Know when to pounce.</p></div>
+  <div class="feat"><div class="icon">📊</div><h3>Spike projections</h3><p>Rough expected move over the time left, so you know whether the target is even reachable.</p></div>
+  <div class="feat"><div class="icon">📡</div><h3>2-second refresh</h3><p>Live price ticks every 2 seconds, full analysis every 5. The market doesn't wait and neither do you.</p></div>
+  <div class="feat"><div class="icon">💜</div><h3>Yuki</h3><p>Your anime trading copilot. Bullish, bearish or chill — she matches the market's mood.</p></div>
+</div>
+
+<h2 class="section-title">How it works</h2>
+<p class="section-sub">Three steps between you and the signal.</p>
+<div class="steps">
+  <div class="step"><div class="n">1</div><h3>Get access</h3><p>Create an account and verify your email. Takes about a minute.</p></div>
+  <div class="step"><div class="n">2</div><h3>Watch the desk</h3><p>The dashboard tracks BTC spot, the Kalshi order book and the countdown — live.</p></div>
+  <div class="step"><div class="n">3</div><h3>Read the signal</h3><p>Direction conviction, entry checklists and scalp meters tell you what the desk sees.</p></div>
 </div>
 
 <div class="faq">
-  <h2 style="text-align:center">FAQ</h2>
-  <details><summary>Is this financial advice?</summary><p class="fine">No. Threaded is a research tool that estimates probabilities. Nothing here is financial advice, and past signals don't predict future results. Never trade money you can't afford to lose.</p></details>
-  <details><summary>How does the Discord fit in?</summary><p class="fine">The Discord is our free community — teasers, discussion and Yuki memes. Subscribers get a special role and the full live dashboard here.</p></details>
-  <details><summary>Can I cancel?</summary><p class="fine">Anytime, from the Billing page. You keep access until the end of your billing period.</p></details>
-  <details><summary>Does it place trades for me?</summary><p class="fine">No — Threaded never touches your money or your Kalshi account. You always place your own trades.</p></details>
+  <h2 class="section-title">FAQ</h2>
+  <details><summary>Is this financial advice?</summary><p>No. Threaded is a research tool that estimates probabilities. Nothing here is financial advice, and past signals don't predict future results. Never trade money you can't afford to lose.</p></details>
+  <details><summary>How does the Discord fit in?</summary><p>The Discord is our free community — teasers, discussion and Yuki memes. Subscribers get a special role and the full live dashboard here.</p></details>
+  <details><summary>Can I cancel?</summary><p>Anytime, from the Billing page. You keep access until the end of your billing period.</p></details>
+  <details><summary>Does it place trades for me?</summary><p>No — Threaded never touches your money or your Kalshi account. You always place your own trades.</p></details>
 </div>
 
 <div class="pricing" id="pricing">
   <div class="price-card">
-    <h2 style="margin-top:0">Threaded Pro</h2>
+    <h2>Threaded Pro</h2>
     <div class="amount">{{ plan_price }}</div>
     <p class="fine">per month · cancel anytime</p>
     <ul class="checklist" style="text-align:left; max-width: 320px; margin: 18px auto;">

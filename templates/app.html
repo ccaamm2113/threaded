@@ -4,27 +4,41 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Threaded — BTC 15-Minute Analyzer</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>₿</text></svg>">
-<link rel="stylesheet" href="/static/styles.css?v=10">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧵</text></svg>">
+<link rel="stylesheet" href="/static/styles.css?v=14">
 </head>
 <body>
 <div id="bg-image"></div>
 <div class="bg-overlay"></div>
 
 <header class="topbar">
-  <div class="topbar-text">
-    <h1 class="hero-title"><img class="brand-logo" src="/static/img/threaded_logo.webp" alt="Threaded logo"> Threaded <span class="ver-tag">v13</span></h1>
-    <p class="subtitle">BTC 15-minute Kalshi market analyzer — research dashboard only. Estimates probabilities; it does not place trades or guarantee outcomes. Featuring Yuki, your trading copilot!</p>
-    <p class="fine">{% if current_user.is_authenticated %}{{ current_user.email }} · <a href="/billing">Billing</a> · <a href="/logout">Log out</a>{% else %}<a href="/login">Log in</a>{% endif %}</p>
+  <a class="brand" href="/app">
+    <img class="brand-logo" src="/static/img/threaded_logo.webp" alt="Threaded logo">
+    <span class="brand-name">Threaded</span>
+    <span class="ver-tag">v14</span>
+  </a>
+  <div class="price-chip">
+    <span class="live-dot" id="live-dot" title="live"></span>
+    <span class="lbl" id="btc-source-label">BTC spot</span>
+    <b id="btc-price">—</b>
+    <span id="btc-change">—</span>
   </div>
+  <nav class="usernav">
+    {% if current_user.is_authenticated %}
+      <span class="fine">{{ current_user.email }}</span>
+      <a href="/billing">Billing</a>
+      <a href="/logout">Log out</a>
+    {% else %}
+      <a href="/login">Log in</a>
+      <a href="/signup" class="accent">Get access</a>
+    {% endif %}
+  </nav>
 </header>
 
-<div class="thread-hr" aria-hidden="true"><span>🧵</span></div>
-
 <div class="controls-bar">
-  <div class="mascot-zone">
-    <img class="mascot-img" src="/static/img/media-generation-anime-mascot-chibi-0-3d04dee7-3ef9-4526-82b3-0549ad5bd75d.webp" alt="Yuki chibi mascot">
-    <div class="mascot-bubble">Hi! I'm <b>Yuki</b>! I'll help you read the BTC 15-min market!</div>
+  <div class="yuki-mini">
+    <img src="/static/img/media-generation-anime-mascot-chibi-0-3d04dee7-3ef9-4526-82b3-0549ad5bd75d.webp" alt="Yuki">
+    <div class="who"><b>Yuki</b> · your trading copilot<br><span id="poll-status" class="poll-status">connecting…</span></div>
   </div>
   <div class="settings">
     <label>Training candles
@@ -44,8 +58,6 @@
       </select>
     </label>
     <button id="pause-btn" class="btn">⏸ Pause</button>
-    <span id="live-dot" class="live-dot" title="live"></span>
-    <span id="poll-status" class="poll-status"></span>
   </div>
 </div>
 
@@ -59,33 +71,37 @@
 <main>
   <!-- ================= DASHBOARD ================= -->
   <section id="tab-dashboard" class="tabpage active">
-    <h2>Live overview</h2>
     <div id="dash-error" class="alert hidden"></div>
-    <div class="cards4">
-      <div class="card"><div class="card-label" id="btc-source-label">BTC spot</div><div class="card-value" id="btc-price">—</div><div class="card-sub" id="btc-change">—</div></div>
-      <div class="card"><div class="card-label">Model: Up in 15 min</div><div class="card-value" id="model-up">—</div><div class="card-sub">&nbsp;</div></div>
-      <div class="card"><div class="card-label">Model: Down / flat</div><div class="card-value" id="model-down">—</div><div class="card-sub">&nbsp;</div></div>
+
+    <div class="deck">
+      <div>
+        <div id="dash-signal" class="signal-wait">
+          <span class="signal-kicker">Live direction signal</span>
+          <h2 id="dash-signal-title">Loading…</h2>
+          <p id="dash-signal-sub"></p>
+        </div>
+        <div class="probbar-wrap">
+          <div class="probbar"><div id="dash-prob-fill" class="probbar-fill"></div></div>
+        </div>
+      </div>
+      <div class="yuki-card">
+        <span class="yuki-tag">✦ Copilot ✦</span>
+        <img id="dash-girl" class="avatar" src="/static/img/yuki_chill.webp" alt="Yuki">
+        <div class="yuki-says" id="dash-yuki-says">Yuki is warming up…</div>
+      </div>
+    </div>
+
+    <h3>Model snapshot</h3>
+    <div class="cards3">
+      <div class="card"><div class="card-label">Model: Up in 15 min</div><div class="card-value" id="model-up">—</div></div>
+      <div class="card"><div class="card-label">Model: Down / flat</div><div class="card-value" id="model-down">—</div></div>
       <div class="card"><div class="card-label">Latest candle (UTC)</div><div class="card-value" id="candle-time">—</div><div class="card-sub" id="candle-full">—</div></div>
     </div>
 
-    <div class="signal-row">
-      <img id="dash-girl" class="signal-girl" src="/static/img/yuki_chill.webp" alt="Yuki">
-      <div id="dash-signal" class="signal-wait">
-        <h2 id="dash-signal-title">Loading…</h2>
-        <p id="dash-signal-sub"></p>
-      </div>
-    </div>
-    <div class="probbar"><div id="dash-prob-fill" class="probbar-fill"></div></div>
-
-    <div class="mascot-comment">
-      <img class="mascot-img sm" src="/static/img/media-generation-anime-mascot-chibi-0-3d04dee7-3ef9-4526-82b3-0549ad5bd75d.webp" alt="Yuki">
-      <div class="mascot-bubble" id="dash-yuki-says">Yuki is warming up…</div>
-    </div>
-
-    <h3>Quick historical check</h3>
+    <h3>Model health</h3>
     <div class="cards3">
       <div class="card"><div class="card-label">Holdout accuracy</div><div class="card-value" id="holdout-acc">—</div></div>
-      <div class="card"><div class="card-label">Brier score (lower = better)</div><div class="card-value" id="brier">—</div></div>
+      <div class="card"><div class="card-label">Brier score <span style="text-transform:none;letter-spacing:0">(lower = better)</span></div><div class="card-value" id="brier">—</div></div>
       <div class="card"><div class="card-label">Training samples</div><div class="card-value" id="n-train">—</div></div>
     </div>
     <p class="fine">Rough sanity check, not proof of profitability. Overlapping labels, regime shifts, fees and slippage all distort results.</p>
@@ -93,7 +109,7 @@
 
   <!-- ================= CHART ================= -->
   <section id="tab-chart" class="tabpage">
-    <h2>📈 Interactive BTC candlestick chart</h2>
+    <h2>BTC candlestick chart</h2>
     <p class="fine">🟢 green = up · 🔴 red = down</p>
     <div class="chart-controls">
       <label>History
@@ -118,7 +134,7 @@
           <option value="1W">1 week</option>
         </select>
       </label>
-      <span id="chart-status" class="fine"></span>
+      <span id="chart-status" class="fine mono"></span>
     </div>
     <div class="chart-wrap"><canvas id="chart"></canvas></div>
     <p class="fine" id="chart-caption"></p>
@@ -126,7 +142,7 @@
 
   <!-- ================= KALSHI ================= -->
   <section id="tab-kalshi" class="tabpage">
-    <h2>🎯 Kalshi 15-minute BTC contract monitor</h2>
+    <h2>Kalshi 15-minute BTC contract monitor</h2>
     <p class="fine">Finds open KXBTC15M markets via Kalshi's public API. Read-only — no trading actions.</p>
     <div id="kalshi-error" class="alert hidden"></div>
 
@@ -142,11 +158,11 @@
       </label>
       <button id="apply-market" class="btn">Apply</button>
     </div>
-    <p class="fine" id="market-status"></p>
+    <p class="fine mono" id="market-status"></p>
 
     <div id="market-body" class="hidden">
       <h3 id="market-title"></h3>
-      <p class="fine"><span id="market-ticker"></span> · <span id="market-close"></span></p>
+      <p class="fine mono"><span id="market-ticker"></span> · <span id="market-close"></span></p>
       <div class="cards5">
         <div class="card"><div class="card-label">YES bid</div><div class="card-value" id="q-yes-bid">—</div></div>
         <div class="card"><div class="card-label">🟢 UP / YES ask</div><div class="card-value" id="q-yes-ask">—</div></div>
@@ -158,13 +174,14 @@
       <div class="cards3">
         <div class="card"><div class="card-label">Contract target</div><div class="card-value" id="target-price">—</div><div class="card-sub" id="target-source"></div></div>
         <div class="card"><div class="card-label">BTC spot vs target</div><div class="card-value" id="spot-vs">—</div><div class="card-sub" id="spot-vs-pct"></div></div>
-        <div class="card"><div class="card-label">⏳ Time left</div><div class="card-value" id="time-left">—</div><div class="card-sub">&nbsp;</div></div>
+        <div class="card"><div class="card-label">⏳ Time left</div><div class="card-value" id="time-left">—</div></div>
       </div>
       <div id="above-below" class="signal-wait slim"><b id="above-below-text"></b></div>
 
-      <div class="signal-row">
+      <div class="signal-duo">
         <img id="kalshi-girl" class="signal-girl" src="/static/img/yuki_chill.webp" alt="Yuki">
         <div id="kalshi-signal" class="signal-wait">
+          <span class="signal-kicker">Kalshi signal</span>
           <h2 id="kalshi-signal-title">—</h2>
           <p id="kalshi-signal-reason"></p>
           <p id="kalshi-signal-blend"></p>
@@ -253,24 +270,22 @@
 
   <!-- ================= MODEL ================= -->
   <section id="tab-model" class="tabpage">
-    <h2>🤖 How to interpret the estimate</h2>
-    <ul class="plain">
-      <li><b>Direction check</b> scores <i>conviction</i> = 50% probability + 25% momentum + 25% edge vs the Kalshi ask. The model/history blend shifts with time left (history earns up to 75% weight near expiry, since the model is trained for a 15-min horizon).</li>
-      <li>🚀 <b>STRONG LEAN</b> (conviction ≥ 0.55), 🟢🔴 <b>LEAN</b> (≥ 0.28), 🟡 <b>WAIT</b> otherwise. Choppy markets (5-min range &gt; 2× normal) demand 0.45 conviction; model/history disagreement caps at LEAN; negative edge is always a veto.</li>
-      <li><b>Buy timing</b> needs 6 green checks including confirmation on 2 consecutive polls, a tight spread (≤ 10¢) and ≥ 2 min left. <b>Sell timing</b> watches for edge evaporation, trailing peak-edge fade, momentum flips and the sub-60s settlement lottery.</li>
-      <li>Kalshi's KXBTC15M settles on a 60-second CF Benchmarks index average — spot candles can differ near the target.</li>
-      <li>Compare the estimate to the <i>executable</i> Kalshi price and account for fees/spread/slippage. No trades are placed here.</li>
-    </ul>
+    <h2>How the estimate works</h2>
+    <div class="explain">
+      <ul class="plain">
+        <li><b>Direction check</b> scores <i>conviction</i> = 50% probability + 25% momentum + 25% edge vs the Kalshi ask. The model/history blend shifts with time left — history earns up to 75% weight near expiry, since the model is trained for a 15-minute horizon.</li>
+        <li>🚀 <b>STRONG LEAN</b> (conviction ≥ 0.55), 🟢🔴 <b>LEAN</b> (≥ 0.28), 🟡 <b>WAIT</b> otherwise. Choppy markets (5-min range &gt; 2× normal) demand 0.45 conviction; model/history disagreement caps at LEAN; negative edge is always a veto.</li>
+        <li><b>Buy timing</b> needs 6 green checks including confirmation on 2 consecutive polls, a tight spread (≤ 10¢) and ≥ 2 min left. <b>Sell timing</b> watches for edge evaporation, trailing peak-edge fade, momentum flips and the sub-60s settlement lottery.</li>
+        <li>Kalshi's KXBTC15M settles on a 60-second CF Benchmarks index average — spot candles can differ near the target.</li>
+        <li>Compare the estimate to the <i>executable</i> Kalshi price and account for fees/spread/slippage. No trades are placed here.</li>
+      </ul>
+    </div>
     <details class="disclosure" open>
       <summary>Model features and limitations</summary>
       <p><b>Features:</b> 1/3/5/15-min returns, rolling volatility, volume change &amp; z-score, SMA distances, 5-min range, RSI(7/14), MACD + signal + histogram, Bollinger %B, ATR ratio, EMA-12/26 distance, 3v5 acceleration, plus ETH/SPY/QQQ 5-min returns when available.</p>
       <p><b>Model:</b> L2 logistic regression (C=0.8, balanced) with sigmoid calibration (3-fold), trained on recent 1-min candles. Chronological holdout for sanity metrics.</p>
       <p><b>Limitations:</b> public feeds can lag; spot ≠ settlement index; overlapping labels and regime shifts distort backtests; fees/slippage not fully modeled. Not a validated profitable strategy — a contract can lose its full cost.</p>
     </details>
-    <div class="mascot-comment">
-      <img class="mascot-img" src="/static/img/media-generation-anime-mascot-chibi-0-3d04dee7-3ef9-4526-82b3-0549ad5bd75d.webp" alt="Yuki">
-      <div class="mascot-bubble">Yuki's tip: the best trade is often <b>no trade</b> when the edge isn't clear! 💜</div>
-    </div>
     <h3>🌸 Meet the team</h3>
     <p class="fine">Yuki changes outfits with the signal — bullish, bearish, or chill.</p>
     <div class="team">
@@ -283,9 +298,9 @@
 
 <footer>
   <b>🧵 Threaded</b> · Made with 💜 by Yuki · Research only, <b>not financial advice</b>. Verify everything on Kalshi before trading.
-  <span class="ver-badge">v13 · Starlight</span>
+  <span class="ver-badge">v14 · Nebula</span>
 </footer>
 
-<script src="/static/app.js?v=10"></script>
+<script src="/static/app.js?v=14"></script>
 </body>
 </html>
