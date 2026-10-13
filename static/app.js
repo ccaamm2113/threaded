@@ -538,7 +538,7 @@ function restartPoll() {
   if (S.timer) clearInterval(S.timer);
   if (S.quickTimer) clearInterval(S.quickTimer);
   S.timer = setInterval(pollState, S.refreshSec * 1000);
-  S.quickTimer = setInterval(pollQuick, 1000);
+  S.quickTimer = setInterval(pollQuick, 2000); // 2s: matches the server's SPOT_TTL, 1s polling just re-fetched cached data
 }
 
 /* ---------- v24: paper betting (simulated, localStorage) ---------- */
