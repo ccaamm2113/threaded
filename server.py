@@ -3,6 +3,7 @@
 Run:  python server.py        ->  http://127.0.0.1:5000
 Logic ported faithfully from the Streamlit app (~/workspace/btc_kalshi_realtime/app.py).
 """
+import json
 import re
 import threading
 import time
@@ -14,20 +15,15 @@ import numpy as np
 import pandas as pd
 import requests
 import yfinance as yf
-from flask import Flask, jsonify, request, redirect, render_template, send_from_directory
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from flask import Flask, jsonify, request, redirect, render_template, send_from_directory, Response
 
 import config
 from models import db, User
-from flow_signals import get_flow_signals, flow_score_direction_relative
+from flow_signals import get_flow_signals
 from ai_reader import get_ai_read, configured as ai_configured
 from parametric import parametric_up_prob, get_sentiment
-from engine_b import engine_b_vote
-from timeframes import htf_vote
+import call_record
+from call_record import kalshi_taker_fee_cents
 
 BASE_DIR = Path(__file__).parent
 KALSHI = "https://external-api.kalshi.com/trade-api/v2"
@@ -107,21 +103,38 @@ def cached(key, ttl_seconds, fn):
     return value
 
 
-# Per-ticker signal memory for the entry/exit logic:
-#   ticker -> {"leans": [last up to 3 signal classes], "peak_edge": float|None, "peak_side": str|None}
-_signal_mem: dict = {}
+# --------------------------------------------------------------------------
+# v26 call-card state machine (per live ticker, in-memory).
+# One latched call per 15-min window: gates -> 2-poll confirmation -> seal.
+# The call stays latched until a sell trigger fires or the window rolls;
+# at rollover the sealed call is graded (Kalshi result, candle fallback)
+# and appended to the public record. In-memory state is lost on restart —
+# only an in-flight call is lost; graded calls live in the JSONL record.
+# --------------------------------------------------------------------------
+CALL_W_TARGET = 0.85   # weight on the empirical history vote (target_p)
+CALL_W_PARAM = 0.15    # weight on the parametric vote (param_p)
+CALL_CONFIRM_POLLS = 2  # consecutive polls gates must pass before a call fires
+CALL_MIN_MINUTES_LEFT = 2.0  # don't fire a new call with less than this left
+CALL_TOO_CLOSE_PCT = 0.05  # |spot-target|/target below this -> too close to call
+CALL_BAND_HALF_C = 10.0   # validity band: seal ask +/- 10c
+CALL_SELL_MINUTES_LEFT = 1.0  # under this -> sell (settlement lottery)
+CALL_BANK_ASK_C = 93.0   # ask at/above this -> sell (bank it)
+CALL_STRONG_ASK_C = 75.0  # seal ask at/above this -> strong call
+CALL_MAX_SPREAD_C = 10.0  # entry gate: spread must be at most this
+
+_call_state: dict = {}
+_call_lock = threading.Lock()
+_LAST_TICKER = {"ticker": None}
 
 
-def signal_memory(ticker):
-    # Cap memory so rotating 15-min tickers can't grow this dict forever.
-    if len(_signal_mem) > 60:
-        for k in list(_signal_mem)[: len(_signal_mem) - 60]:
-            del _signal_mem[k]
-    mem = _signal_mem.get(ticker)
-    if mem is None:
-        mem = {"leans": [], "peak_edge": None, "peak_side": None}
-        _signal_mem[ticker] = mem
-    return mem
+def _new_call_state():
+    return {"status": "none", "side": None, "confirm": 0,
+            "flip_confirm": 0, "edge_confirm": 0,
+            "sealed_at": None, "seal_ask": None, "seal_blended": None,
+            "seal_price": None, "seal_target": None, "close_epoch_ms": None,
+            "seal_gates": [], "band_lo": None, "band_hi": None,
+            "strong": False, "sell_status": "hold", "sell_reason": None,
+            "sell_triggers": []}
 
 
 # --------------------------------------------------------------------------
@@ -228,160 +241,6 @@ def spot_change_1m_pct():
     ts0, p0 = _spot_history[0]
     return (price - p0) / p0 * 100 if p0 and now > ts0 else None
 
-
-def get_yahoo_returns(ticker, period="5d", interval="1m"):
-    def _fetch():
-        # Bound each download so a blocked/slow Yahoo can't stall /api/state
-        # for minutes; on timeout we fall back to an empty series (same as the
-        # Streamlit app's except path).
-        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-        def _dl():
-            return yf.download(ticker, period=period, interval=interval, progress=False,
-                               auto_adjust=True, threads=False)
-        try:
-            with ThreadPoolExecutor(max_workers=1) as ex:
-                data = ex.submit(_dl).result(timeout=15)
-        except (FuturesTimeout, Exception):
-            return pd.Series(dtype=float, name=ticker)
-        if data is None or data.empty:
-            return pd.Series(dtype=float, name=ticker)
-        close = data["Close"]
-        if isinstance(close, pd.DataFrame):
-            close = close.iloc[:, 0]
-        close.index = pd.to_datetime(close.index, utc=True)
-        out = close.pct_change()
-        out.name = ticker
-        return out
-    return cached(("yahoo", ticker, period, interval), 90, _fetch)
-
-
-# --------------------------------------------------------------------------
-# Features (23 + cross-asset proxies)
-# --------------------------------------------------------------------------
-def rsi(series, n=14):
-    delta = series.diff()
-    gain = delta.clip(lower=0).rolling(n).mean()
-    loss = -delta.clip(upper=0).rolling(n).mean()
-    rs = gain / loss.replace(0, np.nan)
-    return 100 - 100 / (1 + rs)
-
-
-def macd_line(series, fast=12, slow=26):
-    return series.ewm(span=fast, adjust=False).mean() - series.ewm(span=slow, adjust=False).mean()
-
-
-def build_features(df):
-    x = pd.DataFrame(index=df.index)
-    close = df["close"].astype(float)
-    ret = close.pct_change()
-    x["ret_1m"] = ret
-    x["ret_3m"] = close.pct_change(3)
-    x["ret_5m"] = close.pct_change(5)
-    x["ret_15m"] = close.pct_change(15)
-    x["volatility_5m"] = ret.rolling(5).std()
-    x["volatility_15m"] = ret.rolling(15).std()
-    x["volume_change"] = df["volume"].pct_change().replace([np.inf, -np.inf], np.nan)
-    x["volume_z_30m"] = (df["volume"] - df["volume"].rolling(30).mean()) / df["volume"].rolling(30).std()
-    x["distance_sma_5"] = close / close.rolling(5).mean() - 1
-    x["distance_sma_15"] = close / close.rolling(15).mean() - 1
-    x["distance_sma_60"] = close / close.rolling(60).mean() - 1
-    x["range_5m"] = (df["high"].rolling(5).max() - df["low"].rolling(5).min()) / close
-    x["rsi_14"] = rsi(close, 14)
-    x["rsi_7"] = rsi(close, 7)
-    m = macd_line(close)
-    x["macd"] = m
-    x["macd_signal"] = m.ewm(span=9, adjust=False).mean()
-    x["macd_hist"] = x["macd"] - x["macd_signal"]
-    sma20 = close.rolling(20).mean()
-    std20 = close.rolling(20).std()
-    x["bollinger_pctb"] = (close - (sma20 - 2 * std20)) / (4 * std20.replace(0, np.nan))
-    tr = pd.concat([df["high"] - df["low"],
-                    (df["high"] - close.shift()).abs(),
-                    (df["low"] - close.shift()).abs()], axis=1).max(axis=1)
-    x["atr_14"] = tr.rolling(14).mean() / close
-    x["ema12_dist"] = close / close.ewm(span=12, adjust=False).mean() - 1
-    x["ema26_dist"] = close / close.ewm(span=26, adjust=False).mean() - 1
-    x["accel_3v5"] = x["ret_3m"] - x["ret_5m"] * 0.6
-    return x.replace([np.inf, -np.inf], np.nan)
-
-
-def fit_predict(btc, n):
-    features = build_features(btc)
-    # Cross-asset proxies fetched in parallel; each is individually cached and
-    # time-bounded inside get_yahoo_returns, so a slow Yahoo can't stall us.
-    from concurrent.futures import ThreadPoolExecutor
-    proxy_tickers = ["ETH-USD", "SPY", "QQQ"]
-    proxies = {}
-    with ThreadPoolExecutor(max_workers=3) as ex:
-        futs = {ex.submit(get_yahoo_returns, t): t for t in proxy_tickers}
-        for fut, ticker in futs.items():
-            try:
-                s = fut.result()
-                if not s.empty:
-                    proxies[ticker.lower().replace("-", "_")] = s
-            except Exception:
-                pass
-    for name, s in proxies.items():
-        aligned = s.reindex(features.index, method="ffill")
-        features[f"{name}_ret_5m"] = aligned.rolling(5).sum()
-    future_return = btc["close"].shift(-15) / btc["close"] - 1
-    target = (future_return > 0).astype(float)
-    target[future_return.isna()] = np.nan
-    valid = features.notna().sum(axis=1) >= max(5, int(features.shape[1] * 0.5))
-    train_mask = valid & target.notna()
-    X_train = features.loc[train_mask].tail(n)
-    y_train = target.loc[X_train.index].astype(int)
-    latest = features.iloc[[-1]]
-    if len(X_train) < 100 or y_train.nunique() < 2:
-        raise ValueError("Not enough usable training rows or only one outcome class. Try again later.")
-    base = Pipeline([
-        ("imputer", SimpleImputer(strategy="median")),
-        ("scale", StandardScaler()),
-        ("model", LogisticRegression(max_iter=2000, class_weight="balanced", C=0.8)),
-    ])
-    model = CalibratedClassifierCV(base, method="sigmoid", cv=3)
-    model.fit(X_train, y_train)
-    if latest.notna().sum(axis=1).iloc[0] < max(5, int(features.shape[1] * 0.5)):
-        raise ValueError("Latest candle does not have enough usable features.")
-    p_up = float(model.predict_proba(latest)[0][list(model.classes_).index(1)])
-    split = int(len(X_train) * 0.8)
-    accuracy = float("nan")
-    brier = float("nan")
-    if split >= 80 and len(X_train) - split >= 20:
-        eval_base = Pipeline([
-            ("imputer", SimpleImputer(strategy="median")),
-            ("scale", StandardScaler()),
-            ("model", LogisticRegression(max_iter=2000, class_weight="balanced", C=0.8)),
-        ])
-        eval_model = CalibratedClassifierCV(eval_base, method="sigmoid", cv=3)
-        eval_model.fit(X_train.iloc[:split], y_train.iloc[:split])
-        probs = eval_model.predict_proba(X_train.iloc[split:])[:, list(eval_model.classes_).index(1)]
-        preds = (probs >= 0.5).astype(int)
-        accuracy = float((preds == y_train.iloc[split:].to_numpy()).mean())
-        brier = float(np.mean((probs - y_train.iloc[split:].to_numpy()) ** 2))
-    return p_up, accuracy, brier, len(X_train)
-
-
-# --------------------------------------------------------------------------
-# Model cache: fit_predict is ~17s and must NOT retrain on every 3s poll.
-# Retrain only when a new 1-minute candle arrives (or every 10 min safety).
-# --------------------------------------------------------------------------
-_model_cache = {"ts": 0.0, "key": None, "result": None}
-_model_lock = threading.Lock()
-MODEL_TTL = 600
-
-
-def fit_predict_cached(btc, n):
-    key = (n, btc.index[-1])
-    now = time.time()
-    with _model_lock:
-        hit = _model_cache
-        if hit["key"] == key and hit["result"] is not None and now - hit["ts"] < MODEL_TTL:
-            return hit["result"]
-    result = fit_predict(btc, n)
-    with _model_lock:
-        _model_cache.update(ts=now, key=key, result=result)
-    return result
 
 # --------------------------------------------------------------------------
 # Kalshi discovery (4 strategies, ported from the Streamlit app)
@@ -576,9 +435,9 @@ def quote_cents(market, keys):
 # --------------------------------------------------------------------------
 # Signal + entry/exit engine (pure logic, no Flask/Streamlit)
 # --------------------------------------------------------------------------
-GIRL_FOR_CLS = {"up": "img/yuki_bullish.webp?v=25",
-                "down": "img/yuki_bearish.webp?v=25",
-                "wait": "img/yuki_chill.webp?v=25"}
+GIRL_FOR_CLS = {"up": "img/yuki_bullish.webp?v=26",
+                "down": "img/yuki_bearish.webp?v=26",
+                "wait": "img/yuki_chill.webp?v=26"}
 
 
 def chop_ratio(btc):
@@ -595,159 +454,335 @@ def chop_ratio(btc):
         return 1.0
 
 
-def compute_direction(blended_up, p_up, target_p, momentum_up, momentum_down,
-                      r3, r5, up_edge, down_edge, minutes_left, chop, w_model, w_hist,
-                      flow=None, ai=None, param_p=None, b_vote=None, htf_p=None):
-    """Tiered direction check with conviction scoring.
+def compute_call_eval(blended_up, target_p, param_p, up_ask, up_bid, down_ask, down_bid,
+                      r3, r5, minutes_left, chop, current, target):
+    """Pure-function evaluation of the v26 call gates (no state, no latching).
 
-    conviction in [-1, 1] = 0.45*probability + 0.20*momentum + 0.20*edge
-                          + 0.15*extra, where extra blends microstructure flow
-                          and the AI reader vote (whichever is available).
-    Tiers: |conv| >= 0.55 -> STRONG LEAN, >= 0.28 (0.45 when choppy) -> LEAN, else WAIT.
-    Hard vetos: negative edge vs the ask, <30s to expiry. Model/history
-    disagreement caps conviction at LEAN level; strong AI disagreement does too.
-    `flow` is a dict from flow_signals.get_flow_signals (may be None).
-    `ai` is a dict from ai_reader.get_ai_read (may be None).
-    Returns (label, cls, tier, reason, min_edge, conviction, components).
+    The probability is the pure contract blend only: 0.85 * target_p +
+    0.15 * param_p. No ML model, no timeframe vote, no Engine B, no AI vote
+    in the call — those were the directional votes that poisoned the old
+    blend (v26 audit). Flow/AI are display context only, never call inputs.
+
+    Edge is net of the Kalshi taker fee: net_edge = blended*100 - ask - fee.
+    Returns an eval dict with gates, conviction (display), and reasons.
     """
+    direction = "up" if blended_up >= 0.5 else "down"
+    prob_side = blended_up if direction == "up" else 1.0 - blended_up
+    fee_up = kalshi_taker_fee_cents(up_ask)
+    fee_down = kalshi_taker_fee_cents(down_ask)
+    up_net = (blended_up * 100 - up_ask - fee_up) if (up_ask is not None and fee_up is not None) else None
+    down_net = ((1 - blended_up) * 100 - down_ask - fee_down) if (down_ask is not None and fee_down is not None) else None
+    edge_here = up_net if direction == "up" else down_net
     min_edge = 8.0 if minutes_left < 3 else (5.0 if minutes_left < 8 else 3.0)
-    comp = {
-        "model_p_up": float(p_up), "target_p": float(target_p),
-        "w_model": float(w_model), "w_hist": float(w_hist),
-        "momentum": "up" if momentum_up else ("down" if momentum_down else "mixed"),
-        "r3": float(r3), "r5": float(r5),
-        "chop_ratio": float(chop), "choppy": bool(chop > 2.0),
-        "min_edge": float(min_edge), "disagree": False,
-    }
-    # surfaced before ANY veto return so the Why panel stays complete
-    comp["param_p"] = float(param_p) if param_p is not None else None
-    b_p = (b_vote or {}).get("p_up")
-    comp["engine_b_p"] = float(b_p) if b_p is not None else None
-    comp["htf_p"] = float(htf_p) if htf_p is not None else None
-    if minutes_left < 0.5:
-        return ("WAIT", "wait", "wait",
-                "Less than 30 seconds remain; settlement noise dominates.",
-                min_edge, 0.0, comp)
-
-    direction = 1 if blended_up >= 0.5 else -1
-    # all component scores are direction-relative: positive = supports the lean
-    prob_align = max(0.0, min(1.0, abs(blended_up - 0.5) * 2 / 0.6))
-    mom = 1.0 if momentum_up else (-1.0 if momentum_down else 0.0)
-    mom_align = mom * direction
-    edge_here = up_edge if direction > 0 else down_edge
-    edge_align = max(-1.0, min(1.0, edge_here / (2 * min_edge))) if edge_here is not None else 0.0
-    comp["edge_cents"] = float(edge_here) if edge_here is not None else None
-    comp["prob_score"] = float(prob_align)
-    comp["mom_score"] = float(mom_align)
-    comp["edge_score"] = float(edge_align)
-
-    # --- extra vote: microstructure flow + AI reader (direction-relative) ---
-    extra_parts = {}
-    flow_score, flow_parts = (0.0, {})
-    if flow:
-        flow_score, flow_parts = flow_score_direction_relative(flow, direction)
-        if flow_parts:
-            extra_parts["flow"] = float(flow_score)
-    comp["flow_score"] = float(flow_score) if flow_parts else None
-    # raw (not direction-relative) parts for honest display in the Why panel
-    raw_parts = {}
-    for k in ("book_imb", "trade_flow", "kalshi_book_imb"):
-        if flow and flow.get(k) is not None:
-            raw_parts[{"book_imb": "book", "trade_flow": "flow",
-                       "kalshi_book_imb": "kbook"}[k]] = float(flow[k])
-    comp["flow_parts"] = raw_parts or None
-    comp["funding_ann"] = _f((flow or {}).get("funding_ann"))
-    comp["oi_chg_15m"] = _f((flow or {}).get("oi_chg_15m"))
-
-    ai_align = 0.0
-    ai_vote = None
-    if ai and ai.get("p_up") is not None:
-        ai_vote = float(ai["p_up"])
-        raw = max(-1.0, min(1.0, (ai_vote - 0.5) * 2 / 0.6))
-        ai_align = raw * direction * (0.4 + 0.6 * float(ai.get("confidence", 0.5)))
-        extra_parts["ai"] = float(ai_align)
-    comp["ai_p_up"] = ai_vote
-    comp["ai_confidence"] = _f(ai.get("confidence")) if ai else None
-    comp["ai_align"] = float(ai_align) if ai_vote is not None else None
-
-    extra = sum(extra_parts.values()) / len(extra_parts) if extra_parts else 0.0
-    comp["extra_score"] = float(extra) if extra_parts else None
-
-    # hard veto: never lean into a negative edge vs the Kalshi ask
-    if edge_here is not None and edge_here < 0:
-        reason = (f"Negative edge ({edge_here:+.1f}c) vs the Kalshi ask - no lean "
-                  f"even though probability is {blended_up:.0%}.")
-        return ("WAIT / NO CLEAR EDGE", "wait", "wait", reason, min_edge, 0.0, comp)
-
-    conviction = max(0.0, 0.45 * prob_align + 0.20 * mom_align + 0.20 * edge_align
-                       + 0.15 * extra)
-
-    # model/history disagreement caps conviction at LEAN level
-    disagree = (p_up - 0.5) * (target_p - 0.5) < 0 and abs(p_up - target_p) > 0.10
-    comp["disagree"] = bool(disagree)
-    cap_note = ""
-    if disagree:
-        conviction = min(0.45, conviction)
-        cap_note = " Model and history disagree - sized down from STRONG."
-
-    # strong AI disagreement with the quant lean also caps at LEAN
-    ai_disagree = (ai_vote is not None and (ai_vote - 0.5) * direction < 0
-                   and abs(ai_vote - 0.5) > 0.12)
-    comp["ai_disagree"] = bool(ai_disagree)
-    if ai_disagree:
-        conviction = min(0.45, conviction)
-        cap_note += " AI reader disagrees with the quant lean - sized down from STRONG."
-
-    # Engine B agreement: independent second opinion. Agreement adds a small
-    # bonus; disagreement is noted but never overrides Engine A.
-    agree_b = b_p is not None and (b_p - 0.5) * direction > 0 and abs(b_p - 0.5) > 0.06
-    disagree_b = b_p is not None and (b_p - 0.5) * direction < 0 and abs(b_p - 0.5) > 0.10
-    comp["engines_agree"] = bool(agree_b)
-    comp["engine_b_disagree"] = bool(disagree_b)
-    if agree_b:
-        conviction = min(1.0, conviction + 0.05)
-        cap_note += " Engine B agrees (+0.05)."
-    if disagree_b:
-        cap_note += " Engine B disagrees with the quant lean."
-
-    # chop filter: demand stronger conviction when the market is whipping
-    need = 0.45 if chop > 2.0 else 0.28
-    comp["need"] = float(need)
-    conviction = float(conviction)
-    signed = direction * conviction  # signed for display: + favors up, - favors down
-
-    side_word = "UP" if direction > 0 else "DOWN"
-    if conviction >= 0.55 and conviction >= need:
-        tier = "strong"
-        label = f"STRONG LEAN {side_word}"
-    elif conviction >= need:
-        tier = "lean"
-        label = f"LEAN {side_word}"
+    if chop > 2.0:
+        min_edge += 2.0  # choppy regime demands a bigger net edge
+    prob_bar = 0.65 if minutes_left < 3 else 0.60
+    dist_pct = abs(current - target) / target * 100 if target else None
+    too_close = bool(dist_pct is not None and dist_pct < CALL_TOO_CLOSE_PCT)
+    momentum_up = r3 > 0 and r5 > 0
+    momentum_down = r3 < 0 and r5 < 0
+    mom_ok = momentum_up if direction == "up" else momentum_down
+    ask_here = up_ask if direction == "up" else down_ask
+    bid_here = up_bid if direction == "up" else down_bid
+    spread = (ask_here - bid_here) if (ask_here is not None and bid_here is not None) else None
+    quotes_ok = all(v is not None for v in (up_ask, up_bid, down_ask, down_bid))
+    gates = [
+        {"label": "Quotes available", "ok": bool(quotes_ok),
+         "detail": "YES/NO bid+ask present" if quotes_ok else "Waiting on Kalshi quotes"},
+        {"label": f"Spread ≤ {CALL_MAX_SPREAD_C:.0f}¢",
+         "ok": (spread is None or spread <= CALL_MAX_SPREAD_C),
+         "detail": f"Spread {spread:.0f}¢" if spread is not None else "Spread n/a"},
+        {"label": "Probability beyond bar", "ok": prob_side >= prob_bar,
+         "detail": f"{prob_side:.1%} vs {prob_bar:.0%} needed"},
+        {"label": "Net edge ≥ threshold (after Kalshi fee)",
+         "ok": (edge_here is not None and edge_here >= min_edge),
+         "detail": (f"{edge_here:+.1f}¢ net vs {min_edge:.0f}¢ needed"
+                    if edge_here is not None else "Ask unavailable")},
+        {"label": "Momentum agrees (3m & 5m)", "ok": bool(mom_ok),
+         "detail": f"3m {r3:+.2f}% · 5m {r5:+.2f}%"},
+        {"label": "≥ 2 min left", "ok": minutes_left >= CALL_MIN_MINUTES_LEFT,
+         "detail": f"{minutes_left:.1f} min left"},
+        {"label": "Not too close to target", "ok": not too_close,
+         "detail": (f"{dist_pct:.3f}% from target (need ≥ {CALL_TOO_CLOSE_PCT:.2f}%)"
+                    if dist_pct is not None else "Distance unknown")},
+    ]
+    gates_pass = all(g["ok"] for g in gates)
+    prob_align = max(0.0, min(1.0, abs(blended_up - 0.5) * 2))
+    edge_align = max(0.0, min(1.0, edge_here / (2 * min_edge))) if edge_here is not None else 0.0
+    mom_align = 1.0 if mom_ok else 0.0
+    conviction = 0.5 * prob_align + 0.3 * edge_align + 0.2 * mom_align
+    if too_close:
+        reason = f"Too close to call — BTC within {CALL_TOO_CLOSE_PCT:.2f}% of the target."
+    elif gates_pass:
+        reason = (f"Contract blend {blended_up:.0%} favors "
+                  f"{'UP' if direction == 'up' else 'DOWN'}; "
+                  f"net edge {edge_here:+.1f}¢ after fee; momentum agrees.")
     else:
-        if chop > 2.0 and conviction >= 0.28:
-            reason = (f"Market is choppy (5-min range {chop:.1f}x its hourly norm) - "
-                      f"Yuki stands aside despite a {signed:+.2f} lean.")
-        else:
-            reason = (f"Conviction {signed:+.2f} is below the {need:.2f} bar - "
-                      f"probability, momentum, or edge too weak for a lean.")
-        return ("WAIT / NO CLEAR EDGE", "wait", "wait", reason + cap_note,
-                min_edge, signed, comp)
+        failed = [g["label"] for g in gates if not g["ok"]]
+        reason = "SIT OUT — waiting on: " + ", ".join(failed) + "."
+    return {
+        "direction": direction, "prob_side": prob_side, "prob_bar": prob_bar,
+        "up_ask": up_ask, "up_bid": up_bid, "down_ask": down_ask, "down_bid": down_bid,
+        "up_net": up_net, "down_net": down_net, "edge_here": edge_here,
+        "min_edge": min_edge, "too_close": too_close, "dist_pct": dist_pct,
+        "momentum_up": momentum_up, "momentum_down": momentum_down,
+        "gates": gates, "gates_pass": gates_pass, "conviction": conviction,
+        "reason": reason, "blended_up": blended_up, "target_p": target_p,
+        "param_p": param_p, "target": target,
+    }
 
-    extras_txt = ""
-    if comp.get("flow_score") is not None:
-        extras_txt += f", flow {comp['flow_score']:+.2f}"
-    if ai_vote is not None:
-        extras_txt += f", AI {ai_vote:.0%} up"
-    if param_p is not None:
-        extras_txt += f", parametric {param_p:.0%}"
-    if htf_p is not None:
-        extras_txt += f", HTF {htf_p:.0%}"
-    reason = (f"Model {p_up:.0%} vs history {target_p:.0%} "
-              f"(blend {w_model:.0%}/{w_hist:.0%}), momentum {comp['momentum']}, "
-              f"edge {edge_here:+.1f}c vs {min_edge:.0f}c needed{extras_txt}, "
-              f"conviction {signed:+.2f}.{cap_note}")
-    cls = "up" if direction > 0 else "down"
-    return (label, cls, tier, reason, min_edge, signed, comp)
+
+def _grade_previous_call(old_ticker, btc):
+    """Grade the sealed call for old_ticker (if any) and append it to the
+    public record. Caller must hold _call_lock. Returns the row or None."""
+    st = _call_state.pop(old_ticker, None)
+    if not st or st["status"] not in ("active", "sold"):
+        return None
+    side = st["side"]
+    target = st["seal_target"]
+    result = None
+    source = None
+    try:
+        m = kalshi_get(f"/markets/{old_ticker}").get("market", {})
+        res = (m.get("result") or "").lower()
+        if res in ("yes", "no"):
+            result = "UP" if res == "yes" else "DOWN"
+            source = "kalshi"
+    except Exception:
+        pass
+    if result is None and target:
+        try:
+            close_ms = st.get("close_epoch_ms")
+            if close_ms:
+                close_ts = pd.to_datetime(close_ms, unit="ms", utc=True)
+                prior = btc[btc.index <= close_ts]
+                if len(prior):
+                    last_close = float(prior["close"].iloc[-1])
+                    result = "UP" if last_close >= target else "DOWN"
+                    source = "candle"
+        except Exception:
+            pass
+    if result is None:
+        return None  # cannot grade honestly; drop rather than fabricate
+    won = (side == "up") == (result == "UP")
+    row = {
+        "ticker": old_ticker,
+        "close_epoch_ms": st.get("close_epoch_ms"),
+        "side": "UP" if side == "up" else "DOWN",
+        "sealed_at": st.get("sealed_at"),
+        "seal_ask_c": st.get("seal_ask"),
+        "seal_blended": st.get("seal_blended"),
+        "seal_btc_price": st.get("seal_price"),
+        "target": target,
+        "result": result,
+        "won": bool(won),
+        "strong": bool(st.get("strong")),
+        "graded_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "grade_source": source,
+    }
+    call_record.append_call(row)
+    return row
+
+
+def _machine_step(st, ev, now_iso, close_epoch_ms, current, minutes_left):
+    """One state-machine transition for the live ticker (lock held)."""
+    if st["status"] == "none":
+        if ev["gates_pass"]:
+            st["confirm"] += 1
+        else:
+            st["confirm"] = 0
+        if st["confirm"] >= CALL_CONFIRM_POLLS:
+            direction = ev["direction"]
+            ask = ev["up_ask"] if direction == "up" else ev["down_ask"]
+            st["status"] = "active"
+            st["side"] = direction
+            st["sealed_at"] = now_iso
+            st["seal_ask"] = ask
+            st["seal_blended"] = ev["blended_up"]
+            st["seal_price"] = current
+            st["seal_target"] = ev["target"]
+            st["close_epoch_ms"] = close_epoch_ms
+            st["seal_gates"] = list(ev["gates"])
+            st["band_lo"] = (ask - CALL_BAND_HALF_C) if ask is not None else None
+            st["band_hi"] = min(100.0, ask + CALL_BAND_HALF_C) if ask is not None else None
+            st["strong"] = bool(ask is not None and ask >= CALL_STRONG_ASK_C)
+            st["sell_status"] = "hold"
+            st["sell_reason"] = None
+            st["flip_confirm"] = 0
+            st["edge_confirm"] = 0
+    elif st["status"] == "active":
+        side = st["side"]
+        ask_now = ev["up_ask"] if side == "up" else ev["down_ask"]
+        edge_now = ev["up_net"] if side == "up" else ev["down_net"]
+        triggers = []
+        time_fired = minutes_left < CALL_SELL_MINUTES_LEFT
+        triggers.append({"label": "Under 60s left — settlement lottery",
+                         "fired": bool(time_fired),
+                         "detail": f"{minutes_left:.1f} min left"})
+        bank_fired = bool(ask_now is not None and ask_now >= CALL_BANK_ASK_C)
+        triggers.append({"label": "Deep in profit (ask ≥ 93¢) — bank it",
+                         "fired": bank_fired,
+                         "detail": (f"Ask {ask_now:.0f}¢" if ask_now is not None
+                                    else "Ask unavailable")})
+        if edge_now is not None and edge_now < 0:
+            st["edge_confirm"] += 1
+        else:
+            st["edge_confirm"] = 0
+        edge_fired = st["edge_confirm"] >= CALL_CONFIRM_POLLS
+        triggers.append({"label": "Edge evaporated (net edge below zero)",
+                         "fired": bool(edge_fired),
+                         "detail": (f"Net edge {edge_now:+.1f}¢ "
+                                    f"({st['edge_confirm']}/{CALL_CONFIRM_POLLS})"
+                                    if edge_now is not None else "Ask unavailable")})
+        flipped = ev["direction"] != side and ev["gates_pass"]
+        if flipped:
+            st["flip_confirm"] += 1
+        else:
+            st["flip_confirm"] = 0
+        flip_fired = st["flip_confirm"] >= CALL_CONFIRM_POLLS
+        triggers.append({"label": "Signal flipped with confirmation",
+                         "fired": bool(flip_fired),
+                         "detail": (f"Blend now favors "
+                                    f"{'UP' if ev['direction'] == 'up' else 'DOWN'} "
+                                    f"({st['flip_confirm']}/{CALL_CONFIRM_POLLS})"
+                                    if flipped else "No flip")})
+        st["sell_triggers"] = triggers
+        fired = [t for t in triggers if t["fired"]]
+        if fired:
+            st["status"] = "sold"
+            st["sell_status"] = "sell"
+            st["sell_reason"] = fired[0]["label"]
+    # status "sold": frozen until the window rolls over
+
+
+def _call_public(st, ev, current, minutes_left):
+    """Public call dict for state['call'] — same shape for every status."""
+    status = st["status"]
+    if status == "none":
+        if ev["too_close"]:
+            reason = ("Too close to call — BTC is within "
+                      f"{CALL_TOO_CLOSE_PCT:.2f}% of the target. No bet.")
+        elif ev["gates_pass"]:
+            reason = (f"Gates clear — confirming "
+                      f"({st['confirm']}/{CALL_CONFIRM_POLLS}).")
+        else:
+            failed = [g["label"] for g in ev["gates"] if not g["ok"]]
+            reason = "SIT OUT — waiting on: " + ", ".join(failed) + "."
+        return {
+            "status": "none", "side": None, "label": "SIT OUT", "cls": "wait",
+            "strong": False, "sealed_at": None, "seal_ask": None,
+            "seal_blended": None, "band_lo": None, "band_hi": None,
+            "band_status": None, "sell_status": "hold", "sell_reason": None,
+            "confirm": st["confirm"], "confirm_needed": CALL_CONFIRM_POLLS,
+            "reason": reason, "gates": ev["gates"],
+            "sell_triggers": [], "conviction": ev["conviction"],
+            "blended_up": ev["blended_up"], "target_p": ev["target_p"],
+            "param_p": ev["param_p"], "net_edge": ev["edge_here"],
+            "min_edge": ev["min_edge"], "too_close": ev["too_close"],
+        }
+    side = st["side"]
+    side_word = "UP" if side == "up" else "DOWN"
+    label = f"BET {side_word}" + (" ★" if st["strong"] else "")
+    ask_now = ev["up_ask"] if side == "up" else ev["down_ask"]
+    band_status = None
+    if st["band_lo"] is not None and ask_now is not None:
+        band_status = ("in-band" if st["band_lo"] <= ask_now <= st["band_hi"]
+                       else "out-of-band")
+    if status == "active":
+        reason = (f"Call sealed {st['sealed_at']} at {st['seal_ask']:.0f}¢ ask. "
+                  f"Blended P {st['seal_blended']:.0%}.")
+        if band_status == "out-of-band":
+            reason += " Price moved out of the entry band — do not chase a fresh entry."
+    else:  # sold
+        reason = (f"SELL — {st['sell_reason']}. Call sealed {st['sealed_at']} "
+                  f"at {st['seal_ask']:.0f}¢ ask.")
+    return {
+        "status": status, "side": side, "label": label,
+        "cls": side, "strong": bool(st["strong"]),
+        "sealed_at": st["sealed_at"], "seal_ask": st["seal_ask"],
+        "seal_blended": st["seal_blended"],
+        "band_lo": st["band_lo"], "band_hi": st["band_hi"],
+        "band_status": band_status,
+        "sell_status": st["sell_status"], "sell_reason": st["sell_reason"],
+        "confirm": st["confirm"], "confirm_needed": CALL_CONFIRM_POLLS,
+        "reason": reason, "gates": st["seal_gates"] or ev["gates"],
+        "sell_triggers": st["sell_triggers"],
+        "conviction": ev["conviction"],
+        "blended_up": ev["blended_up"], "target_p": ev["target_p"],
+        "param_p": ev["param_p"], "net_edge": ev["edge_here"],
+        "min_edge": ev["min_edge"], "too_close": ev["too_close"],
+    }
+
+
+def call_machine_update(ticker, call_eval, close_epoch_ms, btc, current, minutes_left):
+    """Advance the per-ticker call state machine (live view only).
+    Grades the previous window's sealed call on rollover."""
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    with _call_lock:
+        if _LAST_TICKER["ticker"] is not None and _LAST_TICKER["ticker"] != ticker:
+            _grade_previous_call(_LAST_TICKER["ticker"], btc)
+        _LAST_TICKER["ticker"] = ticker
+        if len(_call_state) > 60:
+            for k in list(_call_state)[: len(_call_state) - 60]:
+                del _call_state[k]
+        st = _call_state.get(ticker)
+        if st is None:
+            st = _new_call_state()
+            _call_state[ticker] = st
+        _machine_step(st, call_eval, now_iso, close_epoch_ms, current, minutes_left)
+        return _call_public(st, call_eval, current, minutes_left)
+
+
+def call_machine_snapshot(ticker, call_eval, current, minutes_left):
+    """Read-only view of the call state for custom views (no transitions)."""
+    with _call_lock:
+        st = _call_state.get(ticker)
+        if st is None:
+            st = _new_call_state()
+        return _call_public(st, call_eval, current, minutes_left)
+
+
+def sit_out_call(reason, blended_up=None, target_p=None, param_p=None):
+    """SIT OUT call dict for fallbacks (no market / no target / no history)."""
+    return {
+        "status": "none", "side": None, "label": "SIT OUT", "cls": "wait",
+        "strong": False, "sealed_at": None, "seal_ask": None,
+        "seal_blended": None, "band_lo": None, "band_hi": None,
+        "band_status": None, "sell_status": "hold", "sell_reason": None,
+        "confirm": 0, "confirm_needed": CALL_CONFIRM_POLLS,
+        "reason": reason, "gates": [], "sell_triggers": [],
+        "conviction": 0.0, "blended_up": blended_up, "target_p": target_p,
+        "param_p": param_p, "net_edge": None, "min_edge": None,
+        "too_close": False,
+    }
+
+
+def entry_exit_detail(call_eval, call):
+    """Entry gates + sell triggers in the legacy entry/exit shape, so the
+    existing buy/sell checklist UI keeps working on the new call logic."""
+    gates = call["gates"] or call_eval["gates"]
+    passed = sum(1 for g in gates if g["ok"])
+    total = len(gates)
+    missing = [g["label"] for g in gates if not g["ok"]]
+    if call["status"] in ("active", "sold"):
+        entry_status = "open"  # gates passed at seal; the call is latched
+    elif total and passed == total:
+        entry_status = "open"
+    elif total and passed >= total - 1:
+        entry_status = "almost"
+    else:
+        entry_status = "no"
+    direction = call["side"] or call_eval["direction"]
+    side_word = "UP" if direction == "up" else "DOWN"
+    entry = {"side": side_word,
+             "buy_label": f"YES ({side_word})" if direction == "up" else f"NO ({side_word})",
+             "checks": gates, "passed": passed, "total": total,
+             "status": entry_status, "missing": missing}
+    triggers = call["sell_triggers"]
+    fired_labels = [t["label"] for t in triggers if t["fired"]]
+    exit_ = {"triggers": triggers, "fired_labels": fired_labels,
+             "status": "exit" if fired_labels else "hold"}
+    return entry, exit_
 
 
 def compute_scalp(blended_up, up_edge, down_edge, up_ask, up_bid, down_ask, down_bid,
@@ -894,129 +929,6 @@ def compute_scalp(blended_up, up_edge, down_edge, up_ask, up_bid, down_ask, down
     }
 
 
-def compute_entry_exit(ticker, cls, blended_up, up_edge, down_edge, up_ask, down_ask,
-                       up_bid, down_bid, momentum_up, momentum_down,
-                       r3, r5, minutes_left, min_edge, mins_display,
-                       proj=None, req_up_pct=None, req_down_pct=None):
-    """Entry/exit checklists with the website improvements:
-    1. confirmation across 2 consecutive polls (per-ticker memory)
-    2. trailing peak-edge exit
-    3. spread filter on entry
-    4. adaptive probability bar (65% under 3 min, else 60%)
-    5. entry strength meter: open / almost / no
-    6. exit triggers incl. spike-projection-aware ones:
-       cushion thinner than expected adverse spike -> target at risk;
-       cushion > 2x expected adverse spike -> bank it
-    """
-    mem = signal_memory(ticker)
-    mem["leans"] = (mem["leans"] + [cls])[-3:]
-
-    side = "UP" if cls == "up" else ("DOWN" if cls == "down" else None)
-    if side is None:
-        return None, None
-
-    edge_here = up_edge if side == "UP" else down_edge
-    ask_here = up_ask if side == "UP" else down_ask
-    bid_here = up_bid if side == "UP" else down_bid
-    spread = (ask_here - bid_here) if (ask_here is not None and bid_here is not None) else None
-    mom_ok = momentum_up if side == "UP" else momentum_down
-    mom_flip = momentum_down if side == "UP" else momentum_up
-    prob_side = blended_up if side == "UP" else (1 - blended_up)
-    buy_label = "YES (UP)" if side == "UP" else "NO (DOWN)"
-
-    # --- trailing peak edge (per ticker+side) ---
-    if mem["peak_side"] != side:
-        mem["peak_side"] = side
-        mem["peak_edge"] = edge_here
-    elif edge_here is not None and (mem["peak_edge"] is None or edge_here > mem["peak_edge"]):
-        mem["peak_edge"] = edge_here
-    peak_edge = mem["peak_edge"]
-
-    # --- 1. confirmation: same lean on 2 consecutive polls ---
-    confirmed = len(mem["leans"]) >= 2 and all(s == cls for s in mem["leans"][-2:])
-    n_conf = sum(1 for s in mem["leans"][-2:] if s == cls)
-
-    # --- 4. adaptive probability bar ---
-    prob_bar = 0.65 if minutes_left < 3 else 0.60
-
-    # --- spike projection context (rough) ---
-    up_spike = (proj or {}).get("up_spike_pct")
-    down_spike = (proj or {}).get("down_spike_pct")
-    if side == "UP":
-        req_pct, spike_pct = req_up_pct, up_spike
-    else:
-        req_pct, spike_pct = req_down_pct, down_spike
-    spike_ok = bool(req_pct is not None and spike_pct is not None and req_pct <= spike_pct)
-    spike_detail = (f"Need {req_pct:+.2f}% · spike ≈ {spike_pct:+.2f}%"
-                    if req_pct is not None and spike_pct is not None else "Projection unavailable")
-
-    entry_checks = [
-        {"label": "Clear directional lean", "ok": True,
-         "detail": f"Signal: LEAN {side}"},
-        {"label": "Confirmed on 2 consecutive polls", "ok": confirmed,
-         "detail": "Confirmed ✓" if confirmed else f"Confirming… ({n_conf}/2)"},
-        {"label": "Blended probability beyond bar", "ok": prob_side >= prob_bar,
-         "detail": f"{prob_side:.1%} vs {prob_bar:.0%} needed"},
-        {"label": "Momentum agrees (3m & 5m)", "ok": mom_ok,
-         "detail": f"3m {r3:+.2f}% · 5m {r5:+.2f}%"},
-        {"label": "Edge vs ask ≥ threshold", "ok": (edge_here is not None and edge_here >= min_edge),
-         "detail": (f"{edge_here:+.1f}¢ vs {min_edge:.0f}¢ needed" if edge_here is not None else "Ask unavailable")},
-        {"label": "Tradeable: spread ≤ 10¢, ≥ 2 min left",
-         "ok": ((spread is None or spread <= 10) and minutes_left >= 2.0),
-         "detail": (f"Spread {spread:.0f}¢ · {mins_display} left" if spread is not None
-                    else f"Spread n/a · {mins_display} left")},
-        {"label": "Expected spike reaches the target", "ok": spike_ok, "detail": spike_detail},
-    ]
-    passed = sum(1 for c in entry_checks if c["ok"])
-    total = len(entry_checks)
-    if passed == total:
-        entry_status = "open"
-    elif passed >= 4:
-        entry_status = "almost"
-    else:
-        entry_status = "no"
-    missing = [c["label"] for c in entry_checks if not c["ok"]]
-
-    entry = {"side": side, "buy_label": buy_label, "checks": entry_checks,
-             "passed": passed, "total": total, "status": entry_status, "missing": missing}
-
-    # --- 2/6. exit triggers ---
-    faded = (peak_edge is not None and peak_edge >= min_edge
-             and edge_here is not None and edge_here < peak_edge * 0.4)
-    # --- spike-projection-aware exits: cushion vs expected adverse spike ---
-    cushion_pct = (-req_pct) if req_pct is not None else None
-    adverse_spike = down_spike if side == "UP" else up_spike
-    thin_cushion = bool(cushion_pct is not None and adverse_spike is not None
-                        and 0 < cushion_pct < adverse_spike)
-    fat_cushion = bool(cushion_pct is not None and adverse_spike is not None
-                       and cushion_pct >= 2 * adverse_spike > 0)
-    exit_triggers = [
-        {"label": "Edge evaporated (< 2¢)", "fired": (edge_here is not None and edge_here < 2.0),
-         "detail": (f"Edge now {edge_here:+.1f}¢" if edge_here is not None else "Ask unavailable")},
-        {"label": "Edge faded 60%+ from peak", "fired": faded,
-         "detail": (f"Peak {peak_edge:+.1f}¢ → now {edge_here:+.1f}¢"
-                    if faded and peak_edge is not None and edge_here is not None else "No fade")},
-        {"label": "Momentum flipped against you", "fired": mom_flip,
-         "detail": f"3m {r3:+.2f}% · 5m {r5:+.2f}%"},
-        {"label": "Probability crossed back through 50%", "fired": prob_side < 0.50,
-         "detail": f"Now {prob_side:.1%}"},
-        {"label": "Under 60s left — settlement lottery", "fired": minutes_left < 1.0,
-         "detail": f"{mins_display} left"},
-        {"label": "Deep in profit (ask ≥ 93¢) — bank it", "fired": (ask_here is not None and ask_here >= 93),
-         "detail": (f"Ask {ask_here:.0f}¢" if ask_here is not None else "Ask unavailable")},
-        {"label": "Cushion thinner than expected adverse spike — target at risk", "fired": thin_cushion,
-         "detail": (f"Cushion +{cushion_pct:.2f}% vs adverse spike ≈ {adverse_spike:.2f}%"
-                    if thin_cushion else "Cushion covers normal wiggles")},
-        {"label": "Cushion 2× expected adverse spike — consider banking", "fired": fat_cushion,
-         "detail": (f"Cushion +{cushion_pct:.2f}% vs adverse spike ≈ {adverse_spike:.2f}%"
-                    if fat_cushion else "No excess cushion")},
-    ]
-    fired_labels = [t["label"] for t in exit_triggers if t["fired"]]
-    exit_ = {"triggers": exit_triggers, "fired_labels": fired_labels,
-             "status": "exit" if fired_labels else "hold"}
-    return entry, exit_
-
-
 def _f(x):
     """JSON-safe float (None for NaN/non-finite)."""
     try:
@@ -1025,34 +937,47 @@ def _f(x):
         return None
     return v if np.isfinite(v) else None
 
+
+def _signal_from_call(call, horizon=None, sample_count=None, up_edge=None,
+                      down_edge=None, momentum_up=None, momentum_down=None,
+                      components=None, prob_bar=None):
+    """state['signal'] dict from a call dict (call-card shape)."""
+    tier = "sitout"
+    if call["status"] != "none":
+        tier = "strong" if call["strong"] else "call"
+    return {
+        "label": call["label"], "cls": call["cls"], "tier": tier,
+        "girl": GIRL_FOR_CLS[call["cls"]],
+        "blended_up": call["blended_up"], "target_p": call["target_p"],
+        "param_p": call["param_p"], "horizon": horizon,
+        "sample_count": sample_count, "reason": call["reason"],
+        "prob_bar": prob_bar, "min_edge": call["min_edge"],
+        "up_edge": up_edge, "down_edge": down_edge,
+        "momentum_up": momentum_up, "momentum_down": momentum_down,
+        "conviction": call["conviction"], "components": components,
+    }
+
 # --------------------------------------------------------------------------
 # Full dashboard state builder
 # --------------------------------------------------------------------------
 def compute_state(force_ticker="", target_override=0.0, history=750, selected_ticker=""):
+    # NOTE (v26): `history` is accepted but ignored — there is no ML model
+    # left to train, so the training-window parameter has no effect.
     errors = []
 
-    # --- BTC data + model ---
+    # --- BTC data (v26: no ML model — the model was inverted in live config) ---
     btc, data_source, source_errors = get_market_klines_cached(limit=1000)
     btc = btc.dropna(subset=["close"])
     if len(btc) < 150:
-        raise RuntimeError("The price feed returned too little data to train a model.")
+        raise RuntimeError("The price feed returned too little data to compute a signal.")
     current = float(btc["close"].iloc[-1])
     start_time = btc.index[-1]
-    p_up, accuracy, brier, n_train = fit_predict_cached(btc, history)
-    p_down = 1 - p_up
     last_ret = float(btc["close"].pct_change().iloc[-1] * 100)
 
     close_series = btc["close"].astype(float)
     r1 = float(close_series.pct_change(1).iloc[-1] * 100)
     r3 = float((close_series.iloc[-1] / close_series.iloc[-4] - 1) * 100) if len(close_series) >= 4 else 0.0
     r5 = float((close_series.iloc[-1] / close_series.iloc[-6] - 1) * 100) if len(close_series) >= 6 else 0.0
-
-    if p_up >= 0.60:
-        model_lean, model_cls = "UPWARD LEAN", "up"
-    elif p_up <= 0.40:
-        model_lean, model_cls = "DOWNWARD LEAN", "down"
-    else:
-        model_lean, model_cls = "NO CLEAR EDGE", "wait"
 
     state = {
         "ok": True,
@@ -1064,16 +989,12 @@ def compute_state(force_ticker="", target_override=0.0, history=750, selected_ti
             "candle_time_utc": start_time.strftime("%Y-%m-%d %H:%M:%S UTC"),
             "candle_time_short": start_time.strftime("%H:%M:%S"),
         },
-        "model": {
-            "p_up": p_up, "p_down": p_down,
-            "accuracy": _f(accuracy), "brier": _f(brier), "n_train": n_train,
-            "lean_label": model_lean, "lean_cls": model_cls,
-        },
         "momentum": {"r1": r1, "r3": r3, "r5": r5},
         "markets": [],
         "market": None,
         "market_error": None,
         "signal": None,
+        "call": None,
         "entry": None,
         "exit": None,
         "scalp": None,
@@ -1116,16 +1037,13 @@ def compute_state(force_ticker="", target_override=0.0, history=750, selected_ti
         selected_market = markets[0]
 
     if selected_market is None:
-        # Model-only fallback signal (no Kalshi market available)
-        state["signal"] = {
-            "label": f"MODEL {model_lean}", "cls": model_cls,
-            "girl": GIRL_FOR_CLS[model_cls], "blended_up": p_up,
-            "reason": "No Kalshi market selected — showing the BTC model lean only.",
-            "prob_bar": None, "min_edge": None,
-        }
+        # No Kalshi market available -> SIT OUT (v26: no model-only fallback;
+        # the ML model was inverted and must never be shown as a signal).
+        call = sit_out_call("No Kalshi market available — no call.")
+        state["call"] = call
+        state["signal"] = _signal_from_call(call)
         if not state["market_error"]:
-            state["market_error"] = ("No KXBTC15M market returned. Try again in a few seconds, "
-                                     "or paste the exact ticker into the force-ticker field.")
+            state["market_error"] = ("No KXBTC15M market returned. Try again in a few seconds.")
         return state
 
     ticker_selected = selected_market.get("ticker", force_ticker.strip())
@@ -1184,56 +1102,34 @@ def compute_state(force_ticker="", target_override=0.0, history=750, selected_ti
 
     if target is None or target <= 0:
         state["market_error"] = ("Couldn't identify a numeric target for this contract. "
-                                 "Enter it in the target override field — the app will not guess.")
-        state["signal"] = {
-            "label": f"MODEL {model_lean}", "cls": model_cls,
-            "girl": GIRL_FOR_CLS[model_cls], "blended_up": p_up,
-            "reason": "Target unknown — showing the BTC model lean only.",
-            "prob_bar": None, "min_edge": None,
-        }
+                                 "The app will not guess.")
+        call = sit_out_call("Target unknown — no call.")
+        state["call"] = call
+        state["signal"] = _signal_from_call(call)
         return state
 
-    # --- blended probability + direction signal ---
+    # --- blended probability: pure contract votes only (v26) ---
     target_p, horizon, sample_count = estimate_target_probability(btc, target, minutes_left)
     if target_p is None:
         state["market_error"] = "Not enough completed historical windows to estimate target probability yet."
-        state["signal"] = {
-            "label": f"MODEL {model_lean}", "cls": model_cls,
-            "girl": GIRL_FOR_CLS[model_cls], "blended_up": p_up,
-            "reason": "Historical estimate unavailable — showing the BTC model lean only.",
-            "prob_bar": None, "min_edge": None,
-        }
+        call = sit_out_call("Historical estimate unavailable — no call.")
+        state["call"] = call
+        state["signal"] = _signal_from_call(call)
         return state
 
-    # adaptive blend: the model is trained for a 15-min horizon, so as expiry
-    # nears the horizon-matched historical frequency earns more weight
-    w_hist = 0.40 + 0.35 * (1 - max(minutes_left, 0) / 15)
-    w_model = 1 - w_hist
-    blended_up = w_model * p_up + w_hist * target_p
-    # parametric vote (merged standalone engine, fixed): zero-drift normal
-    # model vs the REAL Kalshi target, from our own 1m candle volatility.
-    # Cheap (microseconds) and complementary to the empirical history vote.
+    # --- v26: pure contract blend + call card ---
+    # blended = 0.85 * target_p (empirical P above target) + 0.15 * param_p
+    # (normal-model P above target). No ML model, no timeframe vote, no
+    # Engine B, no AI vote — the directional votes that poisoned the old
+    # blend are gone. Flow/AI are display context only.
     param_p = parametric_up_prob(current, target, minutes_left, close_series)
-    # multi-timeframe trend vote (5m/15m/1H/4H): validated 60-65% directional
-    # agreement on recent data; kept small and shrunk like the other votes
-    try:
-        htf = htf_vote()
-    except Exception:
-        htf = None
-    htf_p = (htf or {}).get("p_up")
-    if param_p is not None and htf_p is not None:
-        blended_up = 0.75 * blended_up + 0.15 * param_p + 0.10 * htf_p
-    elif param_p is not None:
-        blended_up = 0.85 * blended_up + 0.15 * param_p
-    elif htf_p is not None:
-        blended_up = 0.90 * blended_up + 0.10 * htf_p
-    up_edge = blended_up * 100 - up_ask if up_ask is not None else None
-    down_edge = (1 - blended_up) * 100 - down_ask if down_ask is not None else None
+    blended_up = (CALL_W_TARGET * target_p + CALL_W_PARAM * param_p
+                  if param_p is not None else target_p)
     momentum_up = r3 > 0 and r5 > 0
     momentum_down = r3 < 0 and r5 < 0
     chop = chop_ratio(btc)
 
-    # --- extra prediction sources: microstructure flow + AI reader ---
+    # --- microstructure flow (display + scalp tilt + AI snapshot only) ---
     try:
         flow = get_flow_signals(ticker_selected)
     except Exception:
@@ -1246,10 +1142,9 @@ def compute_state(force_ticker="", target_override=0.0, history=750, selected_ti
         "minutes_left": round(minutes_left, 1),
         "above_target": bool(current > target),
         "r1_pct": round(r1, 3), "r3_pct": round(r3, 3), "r5_pct": round(r5, 3),
-        "model_p_up": round(p_up, 3), "history_p_up": round(target_p, 3),
+        "history_p_up": round(target_p, 3),
+        "param_p_up": round(param_p, 3) if param_p is not None else None,
         "blended_p_up": round(blended_up, 3),
-        "up_edge_c": round(up_edge, 1) if up_edge is not None else None,
-        "down_edge_c": round(down_edge, 1) if down_edge is not None else None,
         "up_ask_c": up_ask, "down_ask_c": down_ask,
         "up_bid_c": up_bid, "down_bid_c": down_bid,
         "book_imbalance": _f((flow or {}).get("book_imb")),
@@ -1266,34 +1161,61 @@ def compute_state(force_ticker="", target_override=0.0, history=750, selected_ti
     except Exception:
         ai = None
 
-    # --- Engine B: independent second opinion (macro + positioning + tape) ---
-    try:
-        eng_b = engine_b_vote(ticker_selected, flow, (flow or {}).get("_r15_fallback"))
-    except Exception:
-        eng_b = None
+    # --- call evaluation + state machine ---
+    call_eval = compute_call_eval(
+        blended_up, target_p, param_p, up_ask, up_bid, down_ask, down_bid,
+        r3, r5, minutes_left, chop, current, target)
+    up_edge = call_eval["up_net"]
+    down_edge = call_eval["down_net"]
+    # Only the live auto-discovered view advances the machine. Custom views
+    # (force ticker / target override) get a read-only snapshot so they can
+    # never fire, seal, or grade calls for a market they are not tracking.
+    live_view = (not force_ticker.strip() and not target_override
+                 and not selected_ticker.strip())
+    close_epoch_ms = int(close_at.timestamp() * 1000) if close_at is not None else None
+    if live_view:
+        call = call_machine_update(ticker_selected, call_eval, close_epoch_ms,
+                                   btc, current, minutes_left)
+    else:
+        call = call_machine_snapshot(ticker_selected, call_eval, current, minutes_left)
 
-    label, cls, tier, reason, min_edge, conviction, comp = compute_direction(
-        blended_up, p_up, target_p, momentum_up, momentum_down,
-        r3, r5, up_edge, down_edge, minutes_left, chop, w_model, w_hist,
-        flow=flow, ai=ai, param_p=param_p, b_vote=eng_b, htf_p=htf_p)
-    state["engine_b"] = eng_b
-    state["htf"] = htf
+    # --- Why-panel components (display only; nothing here changes the call) ---
+    comp = {
+        "target_p": float(target_p),
+        "param_p": float(param_p) if param_p is not None else None,
+        "blended_up": float(blended_up),
+        "edge_cents": float(call_eval["edge_here"]) if call_eval["edge_here"] is not None else None,
+        "momentum": "up" if momentum_up else ("down" if momentum_down else "mixed"),
+        "r3": float(r3), "r5": float(r5),
+        "chop_ratio": float(chop), "choppy": bool(chop > 2.0),
+        "min_edge": float(call_eval["min_edge"]),
+        "too_close": bool(call_eval["too_close"]),
+        "flow_parts": None, "funding_ann": None, "oi_chg_15m": None,
+        "ai_p_up": None, "ai_confidence": None,
+    }
+    if flow:
+        raw_parts = {}
+        for k in ("book_imb", "trade_flow", "kalshi_book_imb"):
+            if flow.get(k) is not None:
+                raw_parts[{"book_imb": "book", "trade_flow": "flow",
+                           "kalshi_book_imb": "kbook"}[k]] = float(flow[k])
+        comp["flow_parts"] = raw_parts or None
+        comp["funding_ann"] = _f(flow.get("funding_ann"))
+        comp["oi_chg_15m"] = _f(flow.get("oi_chg_15m"))
+    if ai and ai.get("p_up") is not None:
+        comp["ai_p_up"] = float(ai["p_up"])
+        comp["ai_confidence"] = _f(ai.get("confidence"))
+
     state["flow"] = {k: _f(v) for k, v in (flow or {}).items() if not k.startswith("_")}
     state["ai"] = ai
     state["ai_enabled"] = ai_configured()
     state["sentiment"] = get_sentiment()
-    prob_bar = 0.65 if minutes_left < 3 else 0.60
-    state["signal"] = {
-        "label": label, "cls": cls, "tier": tier, "girl": GIRL_FOR_CLS[cls],
-        "blended_up": blended_up, "model_p_up": p_up, "target_p": target_p,
-        "param_p": param_p, "htf_p": htf_p,
-        "horizon": horizon, "sample_count": sample_count,
-        "reason": reason, "prob_bar": prob_bar, "min_edge": min_edge,
-        "up_edge": up_edge, "down_edge": down_edge,
-        "momentum_up": momentum_up, "momentum_down": momentum_down,
-        "conviction": conviction, "w_model": w_model, "w_hist": w_hist,
-        "components": comp,
-    }
+    state["call"] = call
+    state["signal"] = _signal_from_call(
+        call, horizon=horizon, sample_count=sample_count,
+        up_edge=up_edge, down_edge=down_edge,
+        momentum_up=momentum_up, momentum_down=momentum_down,
+        components=comp, prob_bar=call_eval["prob_bar"])
 
     # --- spike projection (rough up/down move over remaining time) ---
     proj = spike_projection(btc, minutes_left)
@@ -1314,16 +1236,12 @@ def compute_state(force_ticker="", target_override=0.0, history=750, selected_ti
     else:
         state["projection"] = None
 
-    # --- entry / exit ---
-    entry, exit_ = compute_entry_exit(
-        ticker_selected, cls, blended_up, up_edge, down_edge, up_ask, down_ask,
-        up_bid, down_bid, momentum_up, momentum_down, r3, r5,
-        minutes_left, min_edge, mins_display,
-        proj=proj, req_up_pct=req_up_pct, req_down_pct=req_down_pct)
+    # --- entry gates / sell triggers (from the call logic) ---
+    entry, exit_ = entry_exit_detail(call_eval, call)
     state["entry"] = entry
     state["exit"] = exit_
 
-    # --- scalp signals (fast up/down) ---
+    # --- scalp signals (fast up/down; fed by the pure blend + net edge) ---
     state["scalp"] = compute_scalp(
         blended_up, up_edge, down_edge, up_ask, up_bid, down_ask, down_bid,
         r1, r3, r5, minutes_left, current, target, proj, chop,
@@ -1501,7 +1419,7 @@ def api_candles():
 
 @app.route("/api/version")
 def api_version():
-    return jsonify({"version": "v25"})
+    return jsonify({"version": "v26"})
 
 
 @app.route("/")
@@ -1527,6 +1445,47 @@ def terms():
 @app.route("/privacy")
 def privacy():
     return render_template("privacy.html")
+
+
+# --------------------------------------------------------------------------
+# Public call record (v26) — every sealed call, graded at settlement.
+# Public: the record is the trust asset, so no login/paywall here.
+# --------------------------------------------------------------------------
+@app.route("/record")
+def record_page():
+    calls = call_record.load_calls()
+    summary = call_record.record_summary(calls)
+    envelope = call_record.export_envelope()
+    return render_template("record.html", summary=summary,
+                           calls=list(reversed(calls[-40:])),
+                           envelope=envelope,
+                           public_key=call_record.public_key_b64())
+
+
+@app.route("/api/record/export.jsonl")
+def record_export_jsonl():
+    calls = call_record.load_calls()
+    body = "".join(json.dumps(c, sort_keys=True) + "\n" for c in calls)
+    return Response(body, mimetype="application/x-ndjson",
+                    headers={"Content-Disposition": "attachment; filename=threaded_record.jsonl"})
+
+
+@app.route("/api/record/export.json")
+def record_export_json():
+    return jsonify(call_record.export_envelope())
+
+
+@app.route("/api/record/public-key")
+def record_pubkey():
+    pk = call_record.public_key_b64()
+    if not pk:
+        return jsonify({"ok": False, "error": "signing not configured"}), 404
+    return Response(pk, mimetype="text/plain")
+
+
+@app.route("/api/record/summary")
+def record_summary_api():
+    return jsonify(call_record.record_summary())
 
 
 @app.route("/api/discord/teaser")
@@ -1558,5 +1517,5 @@ if __name__ == "__main__":
     # Locally it isn't -> loopback only, same as before.
     port = int(os.environ.get("PORT", "5000"))
     host = "0.0.0.0" if "PORT" in os.environ else "127.0.0.1"
-    print(f"Threaded v18 - serving on http://{host}:{port}")
+    print(f"Threaded v26 - serving on http://{host}:{port}")
     app.run(host=host, port=port, threaded=True)

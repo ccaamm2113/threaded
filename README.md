@@ -32,7 +32,7 @@ python server.py
   candlestick chart is hand-drawn on `<canvas>` (no chart library).
   The page polls `/api/state` every 15 s (configurable) and updates in place.
 - `static/img/` — Yuki artwork (hero, chibi mascot, bullish / bearish / chill).
-- `requirements.txt` — flask, pandas, numpy, requests, yfinance, scikit-learn.
+- `requirements.txt` — flask, pandas, numpy, requests, yfinance, cryptography.
 
 ## Notes
 

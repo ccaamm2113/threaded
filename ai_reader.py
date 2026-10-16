@@ -1,8 +1,13 @@
 """AI market reader for Threaded's prediction engine.
 
-An LLM acts as one more voter: it reads the full quant snapshot (model,
-history, momentum, microstructure, derivatives, Kalshi quotes) and returns a
-directional probability plus short written reasoning.
+An LLM acts as one more reader: it reads the full quant snapshot (history,
+parametric, momentum, microstructure, derivatives, Kalshi quotes) and returns
+a directional probability plus short written reasoning.
+
+v26: DISPLAY-ONLY. The AI read never changes the call, never caps anything,
+and never gates anything — the call comes from the pure contract blend
+alone. The AI panel exists so a second, independent read is visible, not
+so it can steer the call.
 
 Design rules (cost + latency + honesty):
   - Only runs when AI_API_KEY is set; otherwise the engine is 100% quant and
@@ -14,9 +19,8 @@ Design rules (cost + latency + honesty):
     None while the first read is in flight.
   - Cached ~90s per ticker -> about 10 calls per 15-min window. With a mini
     model that's a few cents a day.
-  - The vote is deliberately modest: it can nudge conviction, never single-
-    handedly flip the quant direction, and strong disagreement caps the tier
-    at LEAN (same philosophy as the model/history disagreement cap).
+  - Display-only: the vote is shown in the AI panel and the Why panel, but
+    it never changes the call, the gates, or the record.
 """
 import json
 import os

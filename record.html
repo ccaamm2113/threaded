@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Threaded — Public Call Record{% endblock %}
+{% block content %}
+<div class="record-wrap">
+  <h1>📜 The public record</h1>
+  <p class="lede">Every call Threaded seals is graded here — wins and losses. No edits, no cherry-picking: a call that fires is in the record, whatever the outcome.</p>
+
+  <div class="record-stats">
+    <div class="card"><div class="card-label">Calls graded</div><div class="card-value">{{ summary.total }}</div></div>
+    <div class="card"><div class="card-label">Win rate</div><div class="card-value">{{ "%.1f"|format(summary.win_rate * 100) if summary.win_rate is not none else "—" }}%</div><div class="card-sub">{{ summary.wins }} won · {{ summary.losses }} lost</div></div>
+    <div class="card"><div class="card-label">Strong calls</div><div class="card-value">{{ "%.1f"|format(summary.strong_win_rate * 100) if summary.strong_win_rate is not none else "—" }}%</div><div class="card-sub">{{ summary.strong_wins }} / {{ summary.strong_total }}</div></div>
+    <div class="card"><div class="card-label">Net edge / call</div><div class="card-value">{{ "%+.2f"|format(summary.net_ev_c) if summary.net_ev_c is not none else "—" }}¢</div><div class="card-sub">after Kalshi taker fee{% if summary.gross_ev_c is not none %} · gross {{ "%+.2f"|format(summary.gross_ev_c) }}¢{% endif %}</div></div>
+  </div>
+  <p class="fine">Net edge assumes buying the called side at the seal ask and holding to settlement, minus the Kalshi taker fee. It is a measurement of the record, not a promise. Past results never guarantee future ones.</p>
+
+  {% if summary.total == 0 %}
+  <div class="alert">No graded calls yet — the record starts with v26 and fills from live calls. Check back after a few windows.</div>
+  {% else %}
+  <h2>Latest graded calls</h2>
+  <table class="admin-table">
+    <thead><tr><th>Sealed (UTC)</th><th>Call</th><th>Ask at seal</th><th>Blended P</th><th>Result</th><th>Outcome</th><th>Strong</th></tr></thead>
+    <tbody>
+    {% for c in calls %}
+      <tr>
+        <td>{{ c.sealed_at or "—" }}</td>
+        <td><b class="{{ 'pos' if c.side == 'UP' else 'neg' }}">{{ c.side }}</b></td>
+        <td>{{ c.seal_ask_c }}¢</td>
+        <td>{{ "%.0f"|format(c.seal_blended * 100) if c.seal_blended is not none else "—" }}%</td>
+        <td>{{ c.result }}</td>
+        <td><b class="{{ 'pos' if c.won else 'neg' }}">{{ "WIN" if c.won else "LOSS" }}</b></td>
+        <td>{{ "★" if c.strong else "" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="fine">Showing the latest {{ calls|length }} calls. The full record is in the export below.</p>
+  {% endif %}
+
+  <h2>Check it yourself</h2>
+  <p>Download the full record and verify it three ways: the file matches its published hash, the hash carries Threaded's signature, and any row matches Kalshi's own settlement record for that market.</p>
+  <div class="record-verify">
+    <p><b>1. Download every call</b></p>
+    <pre>curl -sS -o record.jsonl {{ request.host_url }}api/record/export.jsonl
+curl -sS -o export.json {{ request.host_url }}api/record/export.json</pre>
+    <p><b>2. Nothing was edited</b> — the hash must equal <code>digestSha256</code> in export.json:</p>
+    <pre>sha256sum record.jsonl          # Linux
+shasum -a 256 record.jsonl      # macOS
+# compare with:  jq -r .digestSha256 export.json</pre>
+    {% if envelope.signature %}
+    <p><b>3. It really came from Threaded</b> — verify the Ed25519 signature over the hex digest (as text, no trailing newline):</p>
+    <pre>curl -sS {{ request.host_url }}api/record/public-key &gt; pub.b64
+{ echo "-----BEGIN PUBLIC KEY-----"; fold -w 64 pub.b64; echo; echo "-----END PUBLIC KEY-----"; } &gt; pub.pem
+printf '%s' "$(openssl dgst -sha256 -r record.jsonl | cut -d' ' -f1)" &gt; digest.txt
+jq -r .signature export.json | base64 -d &gt; sig.bin
+openssl pkeyutl -verify -pubin -inkey pub.pem -rawin -in digest.txt -sigfile sig.bin
+# expected: Signature Verified Successfully</pre>
+    {% else %}
+    <p><b>3. Signature:</b> not configured on this server (signing library unavailable) — steps 2 and 4 still verify the file.</p>
+    {% endif %}
+    <p><b>4. Kalshi agrees</b> — pick any row and ask Kalshi for that market (<code>yes</code> = UP won, <code>no</code> = DOWN won):</p>
+    <pre>curl -sS "https://api.elections.kalshi.com/trade-api/v2/markets/&lt;TICKER&gt;" | jq '.market | {ticker, result}'</pre>
+  </div>
+
+  <h2>What counts</h2>
+  <ul class="plain">
+    <li><b>One call per window, latched.</b> A call fires only after the entry gates pass on 2 consecutive polls. Once sealed it stays until a sell trigger fires or the window rolls — it never flip-flops.</li>
+    <li><b>Strong</b> means the called side's ask was 75¢ or more at the seal.</li>
+    <li><b>Graded at settlement.</b> Kalshi's own result decides win/loss; if Kalshi's API is unreachable at grading time, the last 1-minute candle close vs the target is used instead (marked <code>grade_source: candle</code> in the export).</li>
+    <li><b>Every sealed call counts.</b> There is no "practice" bucket and no deletions. A call that fires is graded, win or lose.</li>
+    <li><b>Research only.</b> This record measures Threaded's calls. It is not financial advice, and past results say nothing about the next window.</li>
+  </ul>
+  <p><a href="/app">Back to the dashboard →</a></p>
+</div>
+{% endblock %}
