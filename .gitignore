@@ -1,0 +1,4 @@
+# v26: never commit the call record, the record signing key, or the DB.
+instance/
+__pycache__/
+*.pyc
