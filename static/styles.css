@@ -218,6 +218,15 @@ h4 { margin: 0 0 10px; font-size: .95rem; }
 
 .proj-panel { background: rgba(129,140,248,.07); border: 1px solid rgba(129,140,248,.3);
   border-radius: var(--r-md); padding: 16px 18px; margin: 6px 0 16px; }
+.flip-panel { background: rgba(251,191,36,.06); border: 1px solid rgba(251,191,36,.3);
+  border-radius: var(--r-md); padding: 16px 18px; margin: 6px 0 16px; }
+.flip-head { font-weight: 700; margin-bottom: 10px; font-size: 1rem; }
+.flip-row { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 8px; font-size: .92rem; }
+.flip-row b, .flip-nearest b { font-family: var(--mono); }
+.flip-nearest { margin: 10px 0 4px; font-weight: 600; }
+.flip-badge { display: inline-block; font-size: .78rem; font-weight: 700;
+  padding: 4px 12px; border-radius: 999px; margin-left: 10px;
+  background: rgba(251,191,36,.16); border: 1px solid rgba(251,191,36,.6); color: #fde68a; }
 .proj-title { font-weight: 700; margin-bottom: 10px; font-size: 1rem; }
 .proj-row { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 8px; font-size: .92rem; }
 .proj-row b { font-family: var(--mono); }

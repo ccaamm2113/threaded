@@ -104,6 +104,50 @@ function renderDashboard(d) {
     wait: "Yuki says: <b>no clear edge</b> right now. SIT OUT is a call too! 💛",
   };
   $("dash-yuki-says").innerHTML = says[s ? s.cls : "wait"];
+  renderFlipWatch(d);
+}
+
+/* ---------- momentum flip watch (v26.2, display-only) ---------- */
+function renderFlipWatch(d) {
+  const m = d.momentum, panel = $("flip-panel");
+  if (!m || m.r3_flip_price == null || m.r5_flip_price == null) { panel.hidden = true; return; }
+  panel.hidden = false;
+  const price = d.btc.price;
+  const stateLabel = m.state === "up" ? "UP 🟢" : m.state === "down" ? "DOWN 🔴" : "MIXED 🟡";
+  $("flip-state").textContent = "Momentum " + stateLabel + " (3m " + pctSigned(m.r3) + " · 5m " + pctSigned(m.r5) + ")";
+  $("flip-badge").classList.toggle("hidden", !m.flip_watch);
+  const line = (label, flip) => {
+    const diff = price - flip;
+    const verb = diff > 0 ? "↓ fall" : diff < 0 ? "↑ rise" : "at level";
+    return label + " flip " + money(flip) + " · " + verb + " " + money(Math.abs(diff)) + " (" + (Math.abs(diff) / price * 100).toFixed(3) + "%) to cross";
+  };
+  $("flip-r3").textContent = line("3m", m.r3_flip_price);
+  $("flip-r5").textContent = line("5m", m.r5_flip_price);
+  // Nearest flip: the closest flip level. Crossing any level changes the
+  // momentum state, so the nearest level is the next flip.
+  const lvls = [
+    { label: "3m", price: m.r3_flip_price, comp: "r3" },
+    { label: "5m", price: m.r5_flip_price, comp: "r5" },
+  ];
+  let nearest = null;
+  for (const L of lvls) {
+    const dist = Math.abs(price - L.price);
+    if (!nearest || dist < nearest.dist) nearest = { ...L, dist };
+  }
+  const s3 = m.r3 >= 0 ? 1 : -1, s5 = m.r5 >= 0 ? 1 : -1;
+  let ns3 = s3, ns5 = s5;
+  if (nearest.comp === "r3") ns3 = -s3; else ns5 = -s5;
+  const newState = (ns3 > 0 && ns5 > 0) ? "UP" : (ns3 < 0 && ns5 < 0) ? "DOWN" : "MIXED";
+  const dir = nearest.price > price ? "rises ↑" : "falls ↓";
+  $("flip-nearest").textContent = "Nearest flip: " + newState + " if BTC " + dir + " " + money(nearest.dist) + " (" + (nearest.dist / price * 100).toFixed(3) + "%) to " + money(nearest.price) + " (" + nearest.label + ")";
+  const lf = m.last_flip;
+  if (!lf) {
+    $("flip-last").textContent = "Last flip: none yet this session.";
+  } else {
+    const mins = Math.max(0, Math.round((Date.now() - Date.parse(lf.at)) / 60000));
+    const ago = mins < 1 ? "just now" : mins < 60 ? mins + " min ago" : Math.floor(mins / 60) + "h " + (mins % 60) + "m ago";
+    $("flip-last").textContent = "Last flip: " + String(lf.from).toUpperCase() + " → " + String(lf.to).toUpperCase() + ", " + ago + ".";
+  }
 }
 
 /* Call-card meta + sell lines, shared by the dashboard and Kalshi tabs. */

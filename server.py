@@ -126,6 +126,11 @@ _call_state: dict = {}
 _call_lock = threading.Lock()
 _LAST_TICKER = {"ticker": None}
 
+# v26.2 Momentum Flip Watch (display-only): last momentum state per ticker so
+# the frontend can show when momentum last flipped. Momentum is BTC-wide, so
+# the key is the BTC feed itself ("BTC"), not a Kalshi market ticker.
+_momentum_flip_state: dict = {}
+
 
 def _new_call_state():
     return {"status": "none", "side": None, "confirm": 0,
@@ -979,6 +984,34 @@ def compute_state(force_ticker="", target_override=0.0, history=750, selected_ti
     r3 = float((close_series.iloc[-1] / close_series.iloc[-4] - 1) * 100) if len(close_series) >= 4 else 0.0
     r5 = float((close_series.iloc[-1] / close_series.iloc[-6] - 1) * 100) if len(close_series) >= 6 else 0.0
 
+    # --- v26.2 Momentum Flip Watch (display-only; never a call input) ---
+    # A momentum flip happens when price crosses back over the close from 3
+    # (r3) or 5 (r5) candles ago, so the flip levels ARE those closes.
+    # r3_flip_price / r5_flip_price are the prices where r3 / r5 cross zero.
+    # Distances are signed % from the current price to each flip level.
+    r3_flip_price = float(close_series.iloc[-4]) if len(close_series) >= 4 else None
+    r5_flip_price = float(close_series.iloc[-6]) if len(close_series) >= 6 else None
+    r3_dist_pct = ((current - r3_flip_price) / r3_flip_price * 100) if r3_flip_price else None
+    r5_dist_pct = ((current - r5_flip_price) / r5_flip_price * 100) if r5_flip_price else None
+    mom_state = "up" if (r3 > 0 and r5 > 0) else ("down" if (r3 < 0 and r5 < 0) else "mixed")
+    flip_watch = False
+    if r3_flip_price is not None and r5_flip_price is not None:
+        flip_watch = bool(
+            abs(r3) < 0.05 or abs(r5) < 0.05
+            or (r1 < 0 and r3 > 0 and r5 > 0)   # 1m pushing against up momentum
+            or (r1 > 0 and r3 < 0 and r5 < 0))  # 1m pushing against down momentum
+    with _call_lock:
+        prev = _momentum_flip_state.get("BTC")
+        if prev is None:
+            _momentum_flip_state["BTC"] = {"state": mom_state, "last_flip": None}
+            last_flip = None
+        elif prev["state"] != mom_state:
+            last_flip = {"from": prev["state"], "to": mom_state,
+                         "at": pd.Timestamp.now(tz="UTC").isoformat()}
+            _momentum_flip_state["BTC"] = {"state": mom_state, "last_flip": last_flip}
+        else:
+            last_flip = prev["last_flip"]
+
     state = {
         "ok": True,
         "btc": {
@@ -989,7 +1022,11 @@ def compute_state(force_ticker="", target_override=0.0, history=750, selected_ti
             "candle_time_utc": start_time.strftime("%Y-%m-%d %H:%M:%S UTC"),
             "candle_time_short": start_time.strftime("%H:%M:%S"),
         },
-        "momentum": {"r1": r1, "r3": r3, "r5": r5},
+        "momentum": {"r1": r1, "r3": r3, "r5": r5,
+                     "state": mom_state,
+                     "r3_flip_price": r3_flip_price, "r5_flip_price": r5_flip_price,
+                     "r3_dist_pct": r3_dist_pct, "r5_dist_pct": r5_dist_pct,
+                     "flip_watch": flip_watch, "last_flip": last_flip},
         "markets": [],
         "market": None,
         "market_error": None,
@@ -1419,7 +1456,7 @@ def api_candles():
 
 @app.route("/api/version")
 def api_version():
-    return jsonify({"version": "v26"})
+    return jsonify({"version": "v26.2"})
 
 
 @app.route("/")
@@ -1517,5 +1554,5 @@ if __name__ == "__main__":
     # Locally it isn't -> loopback only, same as before.
     port = int(os.environ.get("PORT", "5000"))
     host = "0.0.0.0" if "PORT" in os.environ else "127.0.0.1"
-    print(f"Threaded v26 - serving on http://{host}:{port}")
+    print(f"Threaded v26.2 - serving on http://{host}:{port}")
     app.run(host=host, port=port, threaded=True)
