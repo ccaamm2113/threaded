@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Billing — Threaded{% endblock %}
+{% block content %}
+<script src="https://js.stripe.com/dahlia/stripe.js"></script>
+<div class="auth-wrap" style="max-width:640px">
+  <h2>💳 Billing</h2>
+  {% if error %}<div class="auth-err">{{ error }}</div>{% endif %}
+  {% if current_user.is_subscriber %}
+    <p>✅ <b>Threaded Pro is active</b> on {{ current_user.email }}.</p>
+    <form method="post" action="/billing/portal">
+      <button class="btn" type="submit">Manage subscription (cancel, update card…)</button>
+    </form>
+    <p class="fine">Opens Stripe's secure customer portal.</p>
+  {% else %}
+    <p>You're on the free plan — the live dashboard is locked. Pick a plan:</p>
+    <div class="cards3" style="margin-top:14px">
+      {% for p in plans %}
+      <div class="card" style="text-align:center">
+        <div class="card-label">{{ p.key|capitalize }}</div>
+        <div class="card-value">{{ p.price }}</div>
+        <div class="card-sub">{{ p.blurb }}</div>
+        <div style="margin-top:12px">
+          <button class="btn" type="button" onclick="startCheckout('{{ p.key }}')"
+                  {% if not p.ready %}disabled style="opacity:.4;cursor:not-allowed"{% endif %}>
+            {% if p.ready %}Choose {{ p.key }}{% else %}Coming soon{% endif %}
+          </button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div id="checkout-section" class="hidden" style="margin-top:22px">
+      <h3 style="margin-top:0">Complete your payment</h3>
+      <div id="checkout-error" class="auth-err hidden"></div>
+      <div id="checkout-form"></div>
+      <p class="fine" style="margin-top:10px">🔒 Secure payment form by Stripe. Cancel anytime from the customer portal.</p>
+    </div>
+  {% endif %}
+</div>
+
+{% if not current_user.is_subscriber %}
+<script>
+const STRIPE_PK = "{{ stripe_pk }}";
+const appearance = {
+  "theme": "stripe",
+  "labels": "auto",
+  "inputs": "spaced",
+  "variables": {
+    "borderRadius": "4px",
+    "colorBackground": "#ffffff",
+    "colorDanger": "#df1b41",
+    "colorPrimary": "#0570de",
+    "colorSuccess": "#00c853",
+    "colorText": "#30313d",
+    "fontFamily": "default",
+    "fontSizeBase": "16px",
+    "spacingUnit": "4px"
+  }
+};
+
+function checkoutError(msg) {
+  const el = document.getElementById("checkout-error");
+  el.textContent = msg;
+  el.classList.remove("hidden");
+}
+
+async function startCheckout(plan) {
+  document.getElementById("checkout-error").classList.add("hidden");
+  const sec = document.getElementById("checkout-section");
+  sec.classList.remove("hidden");
+  sec.scrollIntoView({ behavior: "smooth", block: "start" });
+  const box = document.getElementById("checkout-form");
+  box.innerHTML = '<p class="fine">Loading secure payment form…</p>';
+
+  let d;
+  try {
+    const r = await fetch("/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan: plan })
+    });
+    d = await r.json();
+  } catch (e) {
+    checkoutError("Could not reach the server. Try again.");
+    return;
+  }
+  if (!d.client_secret) {
+    checkoutError(d.error || "Could not start checkout.");
+    box.innerHTML = "";
+    return;
+  }
+
+  const stripe = Stripe(STRIPE_PK, { betas: ["custom_checkout_payment_form_1"] });
+  const clientSecret = Promise.resolve(d.client_secret);
+  const checkout = stripe.initCheckoutFormSdk({ clientSecret, appearance });
+  const form = checkout.createForm({ layout: "expanded" });
+  box.innerHTML = "";
+  form.mount("#checkout-form");
+
+  const loadActionsResult = await checkout.loadActions();
+  if (loadActionsResult.type === "success") {
+    form.on("confirm", async (event) => {
+      try {
+        await loadActionsResult.actions.confirm({ formConfirmEvent: event });
+        window.location.href = "/billing?subscribed=1";
+      } catch (error) {
+        checkoutError((error && error.message) || "Payment failed. Try again.");
+      }
+    });
+  } else {
+    checkoutError("Could not load the payment form. Try again.");
+  }
+}
+</script>
+{% endif %}
+{% endblock %}

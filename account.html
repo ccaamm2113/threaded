@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Account — Threaded{% endblock %}
+{% block content %}
+<div class="auth-wrap" style="max-width:520px">
+  <h2>👤 Account</h2>
+  {% if msg %}<p style="color:#86efac">{{ msg }}</p>{% endif %}
+  {% if error %}<div class="auth-err">{{ error }}</div>{% endif %}
+  <p class="fine">Email: <b>{{ current_user.email }}</b>
+    {% if current_user.email_verified %}✅ verified{% else %}⚠️ <a href="/verify-pending">not verified</a>{% endif %}<br>
+    Plan: <b>{% if current_user.is_subscriber %}Threaded Pro ✅{% else %}Free{% endif %}</b> · <a href="/billing">Billing</a></p>
+
+  <h3>Change password</h3>
+  <form method="post">
+    <input type="hidden" name="action" value="password">
+    <label>Current password</label>
+    <input type="password" name="current_password" required autocomplete="current-password">
+    <label>New password (min 8 characters)</label>
+    <input type="password" name="new_password" required minlength="8" autocomplete="new-password">
+    <button class="btn" type="submit">Change password</button>
+  </form>
+
+  <h3 style="margin-top:24px">Discord username</h3>
+  <p class="fine">Used to grant your Subscriber role automatically.</p>
+  <form method="post">
+    <input type="hidden" name="action" value="discord">
+    <input type="text" name="discord_username" value="{{ current_user.discord_username or '' }}" placeholder="@you">
+    <button class="btn" type="submit">Save</button>
+  </form>
+</div>
+{% endblock %}
