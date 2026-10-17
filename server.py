@@ -660,6 +660,81 @@ def _machine_step(st, ev, now_iso, close_epoch_ms, current, minutes_left):
     # status "sold": frozen until the window rolls over
 
 
+def compute_scale_plan(side, seal_ask, seal_blended):
+    """v26.3 Scale Plan (display-only guidance; Threaded never places trades).
+
+    Splits a sealed call into entry tranches + an exit ladder so the user
+    scales in/out instead of going all-in at one price. All fees are per
+    1 contract, position-weighted: each fill's fee is weighted by its
+    share of the position, so the plan total is comparable to a single
+    fill. Kalshi fees are per contract, not per fill, so slicing barely
+    changes total fees — the real cost of slicing is fills that never
+    happen (T2) or confirmation that never comes (T3), not fees.
+
+    Net edge is conservative: it charges the full round-trip fees (entry
+    + exit) against the hold-to-settlement payoff (100c on win). Holding
+    to expiry actually charges no exit fee, so the true net edge is
+    slightly better than shown when an exit holds to expiry.
+    Returns None when there is no sealed call (no side / no seal ask).
+    """
+    if side not in ("up", "down") or seal_ask is None or seal_blended is None:
+        return None
+    try:
+        seal_ask = float(seal_ask)
+        seal_blended = float(seal_blended)
+    except (TypeError, ValueError):
+        return None
+    if not (0.0 < seal_ask < 100.0) or not (0.0 <= seal_blended <= 1.0):
+        return None
+    p_side = seal_blended if side == "up" else 1.0 - seal_blended
+    side_word = "UP" if side == "up" else "DOWN"
+
+    t1_price = seal_ask
+    t2_price = max(1.0, seal_ask - 3.0)  # dip limit; never below 1c
+    t3_price = seal_ask  # confirmation tranche: only if still valid after 2 polls
+    if seal_ask >= CALL_BANK_ASK_C:
+        e1_price = seal_ask  # already at bank-it — sell now
+        e1_note = "Already at bank-it — sell now"
+    else:
+        e1_price = min(seal_ask + 10.0, CALL_BANK_ASK_C)
+        e1_note = ("Bank-it level (93¢)" if e1_price >= CALL_BANK_ASK_C
+                   else "Partial target (seal ask + 10¢)")
+    e2_price = seal_ask  # reference for the remaining exit (est.; actual exit price varies)
+
+    def fee(price):
+        return kalshi_taker_fee_cents(price) or 0.0
+
+    tranches = [
+        {"id": "T1", "pct": 50, "price": t1_price, "fee": fee(t1_price),
+         "note": "At seal ask — market, immediate"},
+        {"id": "T2", "pct": 30, "price": t2_price, "fee": fee(t2_price),
+         "note": "Dip limit — only if it fills, else skip"},
+        {"id": "T3", "pct": 20, "price": t3_price, "fee": fee(t3_price),
+         "note": "Confirmation — only if call still valid after 2 more polls"},
+    ]
+    exits = [
+        {"id": "E1", "pct": 50, "price": e1_price, "fee": fee(e1_price),
+         "note": e1_note},
+        {"id": "E2", "pct": 50, "price": e2_price, "fee": fee(e2_price),
+         "note": "Remaining — at expiry or on a sell trigger (fee est. at seal ask)"},
+    ]
+    entry_fee = sum(t["pct"] / 100.0 * t["fee"] for t in tranches)
+    exit_fee = sum(e["pct"] / 100.0 * e["fee"] for e in exits)
+    plan_fee_total = entry_fee + exit_fee
+    single_fee_total = fee(seal_ask) + fee(seal_ask)  # 1 entry + 1 exit at seal ask
+    weighted_entry = sum(t["pct"] / 100.0 * t["price"] for t in tranches)
+    net_edge_plan = p_side * 100.0 - weighted_entry - plan_fee_total
+    net_edge_single = p_side * 100.0 - seal_ask - single_fee_total
+    return {
+        "side": side, "side_word": side_word, "seal_ask": seal_ask,
+        "p_side": p_side, "tranches": tranches, "exits": exits,
+        "entry_fee": entry_fee, "exit_fee": exit_fee,
+        "plan_fee_total": plan_fee_total, "single_fee_total": single_fee_total,
+        "weighted_entry": weighted_entry,
+        "net_edge_plan": net_edge_plan, "net_edge_single": net_edge_single,
+    }
+
+
 def _call_public(st, ev, current, minutes_left):
     """Public call dict for state['call'] — same shape for every status."""
     status = st["status"]
@@ -684,6 +759,7 @@ def _call_public(st, ev, current, minutes_left):
             "blended_up": ev["blended_up"], "target_p": ev["target_p"],
             "param_p": ev["param_p"], "net_edge": ev["edge_here"],
             "min_edge": ev["min_edge"], "too_close": ev["too_close"],
+            "scale_plan": None,
         }
     side = st["side"]
     side_word = "UP" if side == "up" else "DOWN"
@@ -716,6 +792,7 @@ def _call_public(st, ev, current, minutes_left):
         "blended_up": ev["blended_up"], "target_p": ev["target_p"],
         "param_p": ev["param_p"], "net_edge": ev["edge_here"],
         "min_edge": ev["min_edge"], "too_close": ev["too_close"],
+        "scale_plan": compute_scale_plan(side, st["seal_ask"], st["seal_blended"]),
     }
 
 
@@ -758,7 +835,7 @@ def sit_out_call(reason, blended_up=None, target_p=None, param_p=None):
         "reason": reason, "gates": [], "sell_triggers": [],
         "conviction": 0.0, "blended_up": blended_up, "target_p": target_p,
         "param_p": param_p, "net_edge": None, "min_edge": None,
-        "too_close": False,
+        "too_close": False, "scale_plan": None,
     }
 
 
@@ -1456,7 +1533,7 @@ def api_candles():
 
 @app.route("/api/version")
 def api_version():
-    return jsonify({"version": "v26.2"})
+    return jsonify({"version": "v26.3"})
 
 
 @app.route("/")
@@ -1554,5 +1631,5 @@ if __name__ == "__main__":
     # Locally it isn't -> loopback only, same as before.
     port = int(os.environ.get("PORT", "5000"))
     host = "0.0.0.0" if "PORT" in os.environ else "127.0.0.1"
-    print(f"Threaded v26.2 - serving on http://{host}:{port}")
+    print(f"Threaded v26.3 - serving on http://{host}:{port}")
     app.run(host=host, port=port, threaded=True)

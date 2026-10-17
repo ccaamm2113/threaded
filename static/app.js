@@ -105,6 +105,29 @@ function renderDashboard(d) {
   };
   $("dash-yuki-says").innerHTML = says[s ? s.cls : "wait"];
   renderFlipWatch(d);
+  renderScalePlan(d);
+}
+
+/* ---------- scale plan (v26.3, display-only) ---------- */
+function renderScalePlan(d) {
+  const call = d.call || {}, plan = call.scale_plan, panel = $("scale-panel");
+  if (!plan) { panel.hidden = true; return; }
+  panel.hidden = false;
+  $("scale-status").textContent = call.status === "sold"
+    ? "Plan closed — call sold: " + (call.sell_reason || "")
+    : "Active plan";
+  $("scale-side").textContent = "BET " + plan.side_word + " · sealed at " + cents(plan.seal_ask)
+    + " ask · P(" + plan.side_word + ") " + pct1(plan.p_side);
+  const row = (t) => "<tr><td><b>" + t.id + "</b></td><td>" + t.pct + "%</td><td>" + cents(t.price)
+    + "</td><td>" + t.fee.toFixed(2) + "¢</td><td class='fine'>" + t.note + "</td></tr>";
+  $("scale-tranches").innerHTML = plan.tranches.map(row).join("");
+  $("scale-exits").innerHTML = plan.exits.map(row).join("");
+  const sgn = (v) => (v >= 0 ? "+" : "") + v.toFixed(2) + "¢";
+  $("scale-fees").innerHTML = "Fees per contract: plan <b>" + plan.plan_fee_total.toFixed(2) + "¢</b>"
+    + " (entry " + plan.entry_fee.toFixed(2) + "¢ + exit " + plan.exit_fee.toFixed(2) + "¢)"
+    + " vs single-fill <b>" + plan.single_fee_total.toFixed(2) + "¢</b>"
+    + " · net edge after plan fees <b>" + sgn(plan.net_edge_plan) + "</b>"
+    + " (single-fill " + sgn(plan.net_edge_single) + ") · × your contracts";
 }
 
 /* ---------- momentum flip watch (v26.2, display-only) ---------- */
