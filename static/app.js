@@ -2,7 +2,7 @@
 const S = {
   history: 750, refreshSec: 3, paused: false,
   closeEpochMs: null, timer: null, quickTimer: null, countdownTimer: null,
-  lastStateAt: null,
+  lastStateAt: null, flipLevels: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -106,6 +106,9 @@ function renderDashboard(d) {
   $("dash-yuki-says").innerHTML = says[s ? s.cls : "wait"];
   renderFlipWatch(d);
   renderScalePlan(d);
+  // v26.4: keep the latest 1m momentum flip levels for the chart overlay.
+  S.flipLevels = d.momentum || null;
+  if ($("tab-chart") && $("tab-chart").classList.contains("active")) drawChart();
 }
 
 /* ---------- scale plan (v26.3, display-only) ---------- */
@@ -128,6 +131,14 @@ function renderScalePlan(d) {
     + " vs single-fill <b>" + plan.single_fee_total.toFixed(2) + "¢</b>"
     + " · net edge after plan fees <b>" + sgn(plan.net_edge_plan) + "</b>"
     + " (single-fill " + sgn(plan.net_edge_single) + ") · × your contracts";
+}
+
+/* ---------- momentum flip state (shared by Flip Watch + chart overlay) ---------- */
+function momentumStateAfterFlip(m, comp) {
+  if (!m || m.r3 == null || m.r5 == null) return null;
+  let s3 = m.r3 >= 0 ? 1 : -1, s5 = m.r5 >= 0 ? 1 : -1;
+  if (comp === "r3") s3 = -s3; else if (comp === "r5") s5 = -s5; else return null;
+  return (s3 > 0 && s5 > 0) ? "UP" : (s3 < 0 && s5 < 0) ? "DOWN" : "MIXED";
 }
 
 /* ---------- momentum flip watch (v26.2, display-only) ---------- */
@@ -157,10 +168,7 @@ function renderFlipWatch(d) {
     const dist = Math.abs(price - L.price);
     if (!nearest || dist < nearest.dist) nearest = { ...L, dist };
   }
-  const s3 = m.r3 >= 0 ? 1 : -1, s5 = m.r5 >= 0 ? 1 : -1;
-  let ns3 = s3, ns5 = s5;
-  if (nearest.comp === "r3") ns3 = -s3; else ns5 = -s5;
-  const newState = (ns3 > 0 && ns5 > 0) ? "UP" : (ns3 < 0 && ns5 < 0) ? "DOWN" : "MIXED";
+  const newState = momentumStateAfterFlip(m, nearest.comp);
   const dir = nearest.price > price ? "rises ↑" : "falls ↓";
   $("flip-nearest").textContent = "Nearest flip: " + newState + " if BTC " + dir + " " + money(nearest.dist) + " (" + (nearest.dist / price * 100).toFixed(3) + "%) to " + money(nearest.price) + " (" + nearest.label + ")";
   const lf = m.last_flip;
@@ -547,6 +555,41 @@ function drawChart() {
     const yO = Y(k.o), yC = Y(k.c);
     ctx.fillRect(x - bw / 2, Math.min(yO, yC), bw, Math.max(2, Math.abs(yC - yO)));
   });
+  // v26.4 flip levels (display-only): dashed lines from 1m momentum.
+  // Crossing a line flips that component's sign, so each label shows the
+  // resulting momentum state. Levels outside the visible range are skipped;
+  // the chart scale itself is never changed for these lines.
+  const fl = S.flipLevels;
+  if (fl && (fl.r3_flip_price != null || fl.r5_flip_price != null)) {
+    const levels = [
+      { label: "3m", price: fl.r3_flip_price, comp: "r3", color: "#f59e0b", above: true },
+      { label: "5m", price: fl.r5_flip_price, comp: "r5", color: "#a855f7", above: false },
+    ];
+    for (const L of levels) {
+      if (L.price == null || typeof L.price !== "number" || !isFinite(L.price)) continue;
+      if (L.price < lo || L.price > hi) continue;
+      const y = Y(L.price);
+      const after = momentumStateAfterFlip(fl, L.comp);
+      const txt = L.label + " flip → " + (after || "?") + " · " + money(L.price) + " (1m)";
+      ctx.save();
+      ctx.strokeStyle = L.color; ctx.lineWidth = Math.max(1, devicePixelRatio);
+      ctx.setLineDash([6 * devicePixelRatio, 4 * devicePixelRatio]);
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = (10 * devicePixelRatio) + "px Outfit, sans-serif";
+      const tw = ctx.measureText(txt).width;
+      const tx = Math.max(padL + 4 * devicePixelRatio, W - padR - tw - 8 * devicePixelRatio);
+      // 3m label sits above its line, 5m below, so near-identical levels do not collide.
+      const ty = L.above
+        ? Math.max(padT + 11 * devicePixelRatio, y - 5 * devicePixelRatio)
+        : Math.min(H - padB - 3 * devicePixelRatio, y + 14 * devicePixelRatio);
+      ctx.fillStyle = "rgba(0,0,0,.55)";
+      ctx.fillRect(tx - 4 * devicePixelRatio, ty - 10 * devicePixelRatio, tw + 8 * devicePixelRatio, 14 * devicePixelRatio);
+      ctx.fillStyle = L.color;
+      ctx.fillText(txt, tx, ty);
+      ctx.restore();
+    }
+  }
 }
 window.addEventListener("resize", () => { sizeChart(); drawChart(); });
 

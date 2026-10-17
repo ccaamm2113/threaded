@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Threaded — BTC 15-Minute Analyzer</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧵</text></svg>">
-<link rel="stylesheet" href="/static/styles.css?v=26.3">
+<link rel="stylesheet" href="/static/styles.css?v=26.4">
 </head>
 <body>
 <div id="bg-image"></div>
@@ -13,9 +13,9 @@
 
 <header class="topbar">
   <a class="brand" href="/app">
-    <img class="brand-logo" src="/static/img/threaded_logo.webp?v=26.3" alt="Threaded logo">
+    <img class="brand-logo" src="/static/img/threaded_logo.webp?v=26.4" alt="Threaded logo">
     <span class="brand-name">Threaded</span>
-    <span class="ver-tag">v26.3</span>
+    <span class="ver-tag">v26.4</span>
   </a>
   <div class="price-chip">
     <span class="live-dot" id="live-dot" title="live"></span>
@@ -39,7 +39,7 @@
 
 <div class="controls-bar">
   <div class="yuki-mini">
-    <img src="/static/img/media-generation-anime-mascot-chibi-0-3d04dee7-3ef9-4526-82b3-0549ad5bd75d.webp?v=26.3" alt="Yuki">
+    <img src="/static/img/media-generation-anime-mascot-chibi-0-3d04dee7-3ef9-4526-82b3-0549ad5bd75d.webp?v=26.4" alt="Yuki">
     <div class="who"><b>Yuki</b> · your trading copilot<br><span id="poll-status" class="poll-status">connecting…</span></div>
   </div>
   <div class="settings">
@@ -85,7 +85,7 @@
       </div>
       <div class="yuki-card">
         <span class="yuki-tag">✦ Copilot ✦</span>
-        <img id="dash-girl" class="avatar" src="/static/img/yuki_chill.webp?v=26.3" alt="Yuki">
+        <img id="dash-girl" class="avatar" src="/static/img/yuki_chill.webp?v=26.4" alt="Yuki">
         <div class="yuki-says" id="dash-yuki-says">Yuki is warming up…</div>
       </div>
     </div>
@@ -157,6 +157,7 @@
     </div>
     <div class="chart-wrap"><canvas id="chart"></canvas></div>
     <p class="fine" id="chart-caption"></p>
+    <p class="fine">Dashed lines: momentum flip levels from 1m momentum — 3m amber, 5m purple. Crossing a line flips that component's sign.</p>
   </section>
 
   <!-- ================= KALSHI ================= -->
@@ -184,7 +185,7 @@
       <div id="above-below" class="signal-wait slim"><b id="above-below-text"></b></div>
 
       <div class="signal-duo">
-        <img id="kalshi-girl" class="signal-girl" src="/static/img/yuki_chill.webp?v=26.3" alt="Yuki" loading="lazy">
+        <img id="kalshi-girl" class="signal-girl" src="/static/img/yuki_chill.webp?v=26.4" alt="Yuki" loading="lazy">
         <div id="kalshi-signal" class="signal-wait">
           <span class="signal-kicker">Call card — one call per window</span>
           <h2 id="kalshi-signal-title">—</h2>
@@ -323,9 +324,9 @@
     <h3>🌸 Meet the team</h3>
     <p class="fine">Yuki changes outfits with the signal — bullish, bearish, or chill.</p>
     <div class="team">
-      <div class="teammate"><img loading="lazy" src="/static/img/yuki_bullish.webp?v=26.3" alt="Bullish Yuki"><b>Yuki — Bullish mode 🟢</b><span>Shows up when the desk leans UP.</span></div>
-      <div class="teammate"><img loading="lazy" src="/static/img/yuki_bearish.webp?v=26.3" alt="Bearish Yuki"><b>Yuki — Bearish mode 🔴</b><span>Shows up when the desk leans DOWN.</span></div>
-      <div class="teammate"><img loading="lazy" src="/static/img/yuki_chill.webp?v=26.3" alt="Chill Yuki"><b>Yuki — Chill mode 🟡</b><span>Shows up when it's SIT OUT — coffee time.</span></div>
+      <div class="teammate"><img loading="lazy" src="/static/img/yuki_bullish.webp?v=26.4" alt="Bullish Yuki"><b>Yuki — Bullish mode 🟢</b><span>Shows up when the desk leans UP.</span></div>
+      <div class="teammate"><img loading="lazy" src="/static/img/yuki_bearish.webp?v=26.4" alt="Bearish Yuki"><b>Yuki — Bearish mode 🔴</b><span>Shows up when the desk leans DOWN.</span></div>
+      <div class="teammate"><img loading="lazy" src="/static/img/yuki_chill.webp?v=26.4" alt="Chill Yuki"><b>Yuki — Chill mode 🟡</b><span>Shows up when it's SIT OUT — coffee time.</span></div>
     </div>
   </section>
 </main>
@@ -333,9 +334,9 @@
 <footer>
   <b>🧵 Threaded</b> · Made with 💜 by Yuki · Research only, <b>not financial advice</b>. Verify everything on Kalshi before trading.
   <a href="/record">Public record</a>
-  <span class="ver-badge">v26.3 · Instant</span>
+  <span class="ver-badge">v26.4 · Instant</span>
 </footer>
 
-<script src="/static/app.js?v=26.3"></script>
+<script src="/static/app.js?v=26.4"></script>
 </body>
 </html>
