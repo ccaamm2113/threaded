@@ -15,7 +15,7 @@
   <a class="brand" href="/app">
     <img class="brand-logo" src="/static/img/threaded_logo.webp?v=26.7" alt="Threaded logo">
     <span class="brand-name">Threaded</span>
-    <span class="ver-tag">v26.7</span>
+    <span class="ver-tag">v26.8</span>
   </a>
   <div class="price-chip">
     <span class="live-dot" id="live-dot" title="live"></span>
@@ -90,6 +90,13 @@
       <div class="card"><div class="card-label">🟢 UP ask</div><div class="card-value" id="q-yes-ask">—</div></div>
       <div class="card"><div class="card-label">🔴 DOWN bid</div><div class="card-value" id="q-no-bid">—</div></div>
       <div class="card"><div class="card-label">🔴 DOWN ask</div><div class="card-value" id="q-no-ask">—</div></div>
+    </div>
+
+    <div id="market-split" class="market-split">
+      <div class="split-head">Market split <span class="fine">— what the market is pricing</span></div>
+      <div class="split-bar"><div id="split-up-fill" class="split-up-fill"></div></div>
+      <div class="split-labels"><span id="split-up-pct">UP —</span><span id="split-down-pct">DOWN —</span></div>
+      <p class="fine">Price-implied, not a vote count (Kalshi doesn't publish voter counts).</p>
     </div>
   </section>
 
@@ -174,6 +181,29 @@
     <p class="fine">Display only — suggested guidance, not an order. Threaded never places trades. Kalshi rounds each order's fee UP to the next cent, so each tranche/exit pays its own rounded fee — shown per contract for this plan's tranche sizes (× your contracts). Exit fees estimated at their targets; holding to expiry charges no exit fee.</p>
   </div>
 
+  <!-- ================= SCALP SIGNALS ================= -->
+  <div class="scalp-panel" id="scalp-panel" hidden>
+    <h3>⚡ Scalp signals <span id="scalp-verdict" class="scalp-verdict"></span></h3>
+    <div id="scalp-disagree" class="scalp-disagree" hidden></div>
+    <div class="buysell">
+      <div class="bs-col">
+        <h4>🟢 Scalp UP <span id="scalp-up-label" class="scalp-tag"></span></h4>
+        <div class="scalp-score"><b id="scalp-up-score">—</b><span>/100</span></div>
+        <div class="strength"><div id="scalp-up-fill" class="strength-fill"></div></div>
+        <div class="scalp-stats" id="scalp-up-stats"></div>
+        <ul id="scalp-up-reasons" class="checklist"></ul>
+      </div>
+      <div class="bs-col">
+        <h4>🔴 Scalp DOWN <span id="scalp-down-label" class="scalp-tag"></span></h4>
+        <div class="scalp-score"><b id="scalp-down-score">—</b><span>/100</span></div>
+        <div class="strength"><div id="scalp-down-fill" class="strength-fill down"></div></div>
+        <div class="scalp-stats" id="scalp-down-stats"></div>
+        <ul id="scalp-down-reasons" class="checklist"></ul>
+      </div>
+    </div>
+    <p class="fine">2-min chance is a rough heuristic, not backtested. EV is after fees (1-contract taker fee). Quick in-and-out gauge — the latched call above is the real signal.</p>
+  </div>
+
   <!-- ================= PAPER BETTING ================= -->
   <div class="paper-panel" id="paper-panel">
     <h3>📝 Paper betting <span class="fine">simulated — no real money</span></h3>
@@ -196,7 +226,7 @@
 <footer>
   <b>🧵 Threaded</b> · Made with 💜 by Yuki · Research only, <b>not financial advice</b>. Verify everything on Kalshi before trading.
   <a href="/record">Public record</a>
-  <span class="ver-badge">v26.7 · Instant</span>
+  <span class="ver-badge">v26.8 · Instant</span>
 </footer>
 
 <script src="/static/app.js?v=26.7"></script>

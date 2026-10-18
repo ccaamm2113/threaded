@@ -134,6 +134,48 @@ _call_state: dict = {}
 _call_lock = threading.Lock()
 _LAST_TICKER = {"ticker": None}
 
+# v26.8: scalp verdict confirmation — the scalp verdict only changes after
+# 2 consecutive polls agree (same pattern as the call card). Default views
+# advance it; custom views (force ticker / override) read it without
+# advancing (read-only, like the call machine snapshot).
+_scalp_state = {"pending": None, "confirm": 0, "confirmed": "none"}
+_scalp_lock = threading.Lock()
+
+
+def _confirm_scalp_verdict(raw_verdict):
+    """Advance the scalp confirmation state.
+
+    Returns (confirmed_verdict, confirm_count_0_to_2, confirming_bool).
+    While pending != confirmed the UI shows 'confirming…'.
+    """
+    with _scalp_lock:
+        if raw_verdict == _scalp_state["pending"]:
+            _scalp_state["confirm"] += 1
+        else:
+            _scalp_state["pending"] = raw_verdict
+            _scalp_state["confirm"] = 1
+        if _scalp_state["confirm"] >= 2:
+            _scalp_state["confirmed"] = raw_verdict
+        return (_scalp_state["confirmed"],
+                min(_scalp_state["confirm"], 2),
+                _scalp_state["pending"] != _scalp_state["confirmed"])
+
+
+def _scalp_disagrees(confirmed_verdict, call):
+    """True when the (confirmed) scalp leans the other way from an ACTIVE
+    latched call. Display-only; the call takes priority. A sold / sit-out
+    call never disagrees, and a 'none' scalp verdict has no side."""
+    if not isinstance(call, dict) or call.get("status") != "active":
+        return False
+    call_side = call.get("side")
+    scalp_side = None
+    if (confirmed_verdict or "").startswith("up"):
+        scalp_side = "up"
+    elif (confirmed_verdict or "").startswith("down"):
+        scalp_side = "down"
+    return bool(call_side is not None and scalp_side is not None
+                and scalp_side != call_side)
+
 # v26.2 Momentum Flip Watch (display-only): last momentum state per ticker so
 # the frontend can show when momentum last flipped. Momentum is BTC-wide, so
 # the key is the BTC feed itself ("BTC"), not a Kalshi market ticker.
@@ -910,7 +952,8 @@ def compute_scalp(blended_up, up_edge, down_edge, up_ask, up_bid, down_ask, down
     enough time left that it isn't an expiry coin-flip. Microstructure flow
     (order-book / trade / Kalshi-book) now tilts the score, and each side
     reports rough 2-minute stats: win probability, expected gain/heat in
-    contract cents, and EV = (2p-1)*gain - spread. Rough — research only.
+    contract cents, and EV = (2p-1)*gain - spread - fee (Kalshi taker fee,
+    ceil per order, 1 contract). Rough — research only.
     """
     # --- microstructure tilt: +1 = bullish order-flow pressure ---
     flow_raw = 0.0
@@ -994,15 +1037,23 @@ def compute_scalp(blended_up, up_edge, down_edge, up_ask, up_bid, down_ask, down
         tilt = max(-0.30, min(0.30, tilt))
         p_2m = 0.5 + tilt * 0.7  # shrunk toward 0.5, same philosophy as parametric
         spread_c = round(ask - bid, 1) if (ask is not None and bid is not None) else None
-        exp_gain_c = exp_heat_c = ev_c = None
+        # v26.8: scalp EV subtracts the Kalshi taker fee (ceil per order,
+        # 1 contract) in addition to the spread. ev_after_fee is the headline
+        # EV; ev_c (spread-only) is kept for reference only.
+        fee_c = kalshi_taker_fee_cents(ask, contracts=1) if ask is not None else None
+        fee_c = round(fee_c, 2) if fee_c is not None else None
+        exp_gain_c = exp_heat_c = ev_c = ev_after_fee_c = None
         if sens_c_per_pct is not None and sigma_1m:
             fav_pct = 0.8 * sigma_1m * np.sqrt(2.0) * 100.0
             g = round(min(30.0, abs(sens_c_per_pct) * fav_pct), 1)
             exp_gain_c, exp_heat_c = g, g
             if spread_c is not None:
                 ev_c = round((2 * p_2m - 1) * g - spread_c, 1)
+                if fee_c is not None:
+                    ev_after_fee_c = round(ev_c - fee_c, 1)
         stats = {"p_2m": round(p_2m, 3), "spread_c": spread_c,
-                 "exp_gain_c": exp_gain_c, "exp_heat_c": exp_heat_c, "ev_c": ev_c}
+                 "exp_gain_c": exp_gain_c, "exp_heat_c": exp_heat_c, "ev_c": ev_c,
+                 "fee_c": fee_c, "ev_after_fee_c": ev_after_fee_c}
         return max(0.0, min(100.0, score)), reasons[:3], stats
 
     req_up_pct = (target - current) / current * 100
@@ -1146,6 +1197,7 @@ def compute_state(force_ticker="", target_override=0.0, history=750, selected_ti
         "exit": None,
         "scalp": None,
         "projection": None,
+        "market_split": {"up_pct": None, "down_pct": None},
         "errors": errors,
     }
 
@@ -1389,10 +1441,49 @@ def compute_state(force_ticker="", target_override=0.0, history=750, selected_ti
     state["exit"] = exit_
 
     # --- scalp signals (fast up/down; fed by the pure blend + net edge) ---
-    state["scalp"] = compute_scalp(
+    raw_scalp = compute_scalp(
         blended_up, up_edge, down_edge, up_ask, up_bid, down_ask, down_bid,
         r1, r3, r5, minutes_left, current, target, proj, chop,
         flow=flow, closes=close_series)
+    # v26.8: scalp verdict only changes after 2 consecutive polls agree.
+    # Default views advance the confirmation; custom views read it without
+    # advancing (read-only, like the call machine snapshot).
+    _is_default_view = (force_ticker == "" and target_override == 0.0
+                        and selected_ticker == "")
+    if _is_default_view:
+        confirmed, confirm_n, confirming = _confirm_scalp_verdict(raw_scalp["verdict"])
+    else:
+        with _scalp_lock:
+            confirmed = _scalp_state["confirmed"]
+            confirming = _scalp_state["pending"] != confirmed
+            confirm_n = min(_scalp_state["confirm"], 2)
+    raw_scalp["verdict"] = confirmed
+    raw_scalp["confirm"] = confirm_n
+    raw_scalp["confirming"] = confirming
+    # v26.8: disagreement flag — scalp leans the other way from the latched
+    # call. Display-only; the call card takes priority. Never changes the call.
+    raw_scalp["disagrees_with_call"] = _scalp_disagrees(confirmed, call)
+    if raw_scalp["disagrees_with_call"]:
+        _scalp_side = "up" if confirmed.startswith("up") else "down"
+        _side_word = "UP" if _scalp_side == "up" else "DOWN"
+        _call_word = "UP" if call.get("side") == "up" else "DOWN"
+        raw_scalp["disagree_note"] = (
+            f"Scalp leans {_side_word} but the call is {_call_word} — "
+            "the call takes priority.")
+    else:
+        raw_scalp["disagree_note"] = None
+    state["scalp"] = raw_scalp
+    # v26.8: live market split — what the MARKET is pricing (midpoint of the
+    # Kalshi quotes), NOT Threaded's model probability. Kalshi doesn't
+    # publish voter counts, so this is price-implied, not a vote count.
+    if up_ask is not None and up_bid is not None:
+        _up_mid = (up_bid + up_ask) / 2.0
+        state["market_split"] = {
+            "up_pct": round(_up_mid, 1),
+            "down_pct": round(100.0 - _up_mid, 1),
+        }
+    else:
+        state["market_split"] = {"up_pct": None, "down_pct": None}
     # live executable quotes (cents) for the paper-betting card
     state["quotes"] = {
         "yes_ask": up_ask, "yes_bid": up_bid,
@@ -1566,7 +1657,7 @@ def api_candles():
 
 @app.route("/api/version")
 def api_version():
-    return jsonify({"version": "v26.7"})
+    return jsonify({"version": "v26.8"})
 
 
 @app.route("/")
@@ -1673,5 +1764,5 @@ if __name__ == "__main__":
     # Locally it isn't -> loopback only, same as before.
     port = int(os.environ.get("PORT", "5000"))
     host = "0.0.0.0" if "PORT" in os.environ else "127.0.0.1"
-    print(f"Threaded v26.7 - serving on http://{host}:{port}")
+    print(f"Threaded v26.8 - serving on http://{host}:{port}")
     app.run(host=host, port=port, threaded=True)

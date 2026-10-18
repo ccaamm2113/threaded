@@ -1,4 +1,4 @@
-/* BTC 15-Minute Kalshi Analyzer — frontend (v26.7: single view — market + chart) */
+/* BTC 15-Minute Kalshi Analyzer — frontend (v26.8: single view — market + chart) */
 const S = {
   history: 750, refreshSec: 3, paused: false,
   closeEpochMs: null, timer: null, quickTimer: null, countdownTimer: null,
@@ -28,10 +28,12 @@ async function pollState() {
     if (!d.ok) { showError("dash-error", d.error || "unknown error"); $("poll-status").textContent = "error"; return; }
     hideError("dash-error");
     renderMarket(d);
+    renderMarketSplit(d);
     renderStatCards(d);
     renderFlipWatch(d);
     renderFlow(d);
     renderScalePlan(d);
+    renderScalp(d);
     paperTick(d);
     renderPaper();
     S.lastStateAt = Date.now();
@@ -199,6 +201,82 @@ function renderScalePlan(d) {
     + " · net edge after plan fees <b>" + sgn(plan.net_edge_plan) + "</b>"
     + " (single-fill " + sgn(plan.net_edge_single) + ") · × your contracts"
     + (plan.note ? "<br><span class='fine'>" + plan.note + "</span>" : "");
+}
+
+/* ---------- market split (v26.8: price-implied UP/DOWN split) ---------- */
+function renderMarketSplit(d) {
+  const ms = d.market_split;
+  const upEl = $("split-up-pct"), downEl = $("split-down-pct");
+  const fill = $("split-up-fill");
+  if (!ms || ms.up_pct == null || ms.down_pct == null) {
+    upEl.textContent = "UP —";
+    downEl.textContent = "DOWN —";
+    fill.style.width = "50%";
+    return;
+  }
+  upEl.textContent = "UP " + ms.up_pct.toFixed(1) + "%";
+  downEl.textContent = "DOWN " + ms.down_pct.toFixed(1) + "%";
+  fill.style.width = Math.max(0, Math.min(100, ms.up_pct)) + "%";
+}
+
+/* ---------- scalp signals (v26.8: fee-adjusted EV, 2-poll confirm, disagreement flag) ---------- */
+function renderScalp(d) {
+  const sc = d.scalp;
+  const panel = $("scalp-panel");
+  if (!sc) { panel.hidden = true; return; }
+  panel.hidden = false;
+  const v = $("scalp-verdict");
+  let verdictTxt, verdictCls;
+  if (sc.verdict === "up") { verdictTxt = "⚡ BEST: SCALP UP"; verdictCls = "scalp-verdict pos"; }
+  else if (sc.verdict === "down") { verdictTxt = "⚡ BEST: SCALP DOWN"; verdictCls = "scalp-verdict neg"; }
+  else if (sc.verdict === "up_lean") { verdictTxt = "👀 Leaning UP"; verdictCls = "scalp-verdict pos"; }
+  else if (sc.verdict === "down_lean") { verdictTxt = "👀 Leaning DOWN"; verdictCls = "scalp-verdict neg"; }
+  else { verdictTxt = "⏸ No scalp — wait"; verdictCls = "scalp-verdict"; }
+  if (sc.confirming) verdictTxt += " · confirming…";
+  v.textContent = verdictTxt;
+  v.className = verdictCls;
+  // disagreement flag — scalp leans the other way from the latched call
+  const dis = $("scalp-disagree");
+  if (sc.disagrees_with_call && sc.disagree_note) {
+    dis.textContent = "⚠️ " + sc.disagree_note;
+    dis.hidden = false;
+  } else {
+    dis.hidden = true;
+  }
+  ["up", "down"].forEach((side) => {
+    const s = sc[side];
+    $("scalp-" + side + "-fill").style.width = s.score + "%";
+    $("scalp-" + side + "-score").textContent = s.score;
+    const tag = $("scalp-" + side + "-label");
+    tag.textContent = s.label === "SCALP" ? "⚡ SCALP" : s.label === "LEAN" ? "👀 LEAN" : "⏸ WAIT";
+    tag.className = "scalp-tag " + (s.label === "SCALP" ? (side === "up" ? "pos" : "neg") : "");
+    const ul = $("scalp-" + side + "-reasons");
+    ul.innerHTML = "";
+    (s.reasons || []).forEach((r) => {
+      const li = document.createElement("li");
+      li.textContent = "• " + r;
+      ul.appendChild(li);
+    });
+    if (!(s.reasons || []).length) {
+      const li = document.createElement("li");
+      li.textContent = "—";
+      ul.appendChild(li);
+    }
+    const st = s.stats || {};
+    const el = $("scalp-" + side + "-stats");
+    if (st.p_2m != null) {
+      const ev = st.ev_after_fee_c == null ? "—" : (st.ev_after_fee_c >= 0 ? "+" : "") + st.ev_after_fee_c.toFixed(1) + "¢";
+      const evCls = st.ev_after_fee_c == null ? "" : (st.ev_after_fee_c >= 0 ? "pos" : "neg");
+      el.innerHTML = "rough 2-min chance <b>" + Math.round(st.p_2m * 100) + "%</b> · " +
+        "+" + (st.exp_gain_c != null ? st.exp_gain_c.toFixed(1) : "—") + "¢/" +
+        "−" + (st.exp_heat_c != null ? st.exp_heat_c.toFixed(1) : "—") + "¢ · " +
+        "spread " + (st.spread_c != null ? st.spread_c.toFixed(1) : "—") + "¢ · " +
+        "fee " + (st.fee_c != null ? st.fee_c.toFixed(1) : "—") + "¢ · " +
+        "EV after fees <b class='" + evCls + "'>" + ev + "</b>";
+    } else {
+      el.innerHTML = "";
+    }
+  });
 }
 
 /* Call-card meta + sell lines. */
