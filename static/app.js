@@ -1,4 +1,4 @@
-/* BTC 15-Minute Kalshi Analyzer — frontend (v26.6: single view — market + chart) */
+/* BTC 15-Minute Kalshi Analyzer — frontend (v26.7: single view — market + chart) */
 const S = {
   history: 750, refreshSec: 3, paused: false,
   closeEpochMs: null, timer: null, quickTimer: null, countdownTimer: null,
@@ -9,6 +9,8 @@ const $ = (id) => document.getElementById(id);
 const money = (v) => v == null ? "—" : "$" + Number(v).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
 const cents = (v) => v == null ? "—" : Math.round(v) + "¢";
 const pct1 = (v) => v == null ? "—" : (v * 100).toFixed(1) + "%";
+const pctSigned = (v) => v == null ? "—" : (v >= 0 ? "+" : "") + v.toFixed(3) + "%";
+const edgeTxt = (v) => v == null ? "Ask unavailable" : (v >= 0 ? "+" : "") + v.toFixed(1) + "¢";
 const bannerCls = (cls) => cls === "up" ? "signal-up" : cls === "down" ? "signal-down" : "signal-wait";
 
 /* ---------- state polling ---------- */
@@ -26,6 +28,12 @@ async function pollState() {
     if (!d.ok) { showError("dash-error", d.error || "unknown error"); $("poll-status").textContent = "error"; return; }
     hideError("dash-error");
     renderMarket(d);
+    renderStatCards(d);
+    renderFlipWatch(d);
+    renderFlow(d);
+    renderScalePlan(d);
+    paperTick(d);
+    renderPaper();
     S.lastStateAt = Date.now();
     $("poll-status").textContent = "updated just now";
   } catch (e) {
@@ -100,6 +108,97 @@ function renderMarket(d) {
   // v26.4: keep the latest 1m momentum flip levels for the chart overlay.
   S.flipLevels = d.momentum || null;
   if (chartData.length) drawChart();
+}
+
+/* ---------- six stat cards (v26.5 layout, s- IDs: the market panel owns c-*) ---------- */
+function renderStatCards(d) {
+  const s = d.signal, call = d.call || {};
+  $("s-blended").textContent = s && s.blended_up != null ? pct1(s.blended_up) : "—";
+  $("s-target-p").textContent = s && s.target_p != null ? pct1(s.target_p) : "—";
+  $("s-param-p").textContent = s && s.param_p != null ? pct1(s.param_p) : "—";
+  $("s-net-edge").textContent = edgeTxt(call.net_edge);
+  $("s-time-left").textContent = d.market ? d.market.mins_display : "—";
+  $("s-target").textContent = d.market && d.market.target != null ? money(d.market.target) : "—";
+  $("s-candle").textContent = d.btc.candle_time_utc;
+}
+
+/* ---------- momentum flip watch (v26.2, display-only) ---------- */
+function renderFlipWatch(d) {
+  const m = d.momentum, panel = $("flip-panel");
+  if (!m || m.r3_flip_price == null || m.r5_flip_price == null) { panel.hidden = true; return; }
+  panel.hidden = false;
+  const price = d.btc.price;
+  const stateLabel = m.state === "up" ? "UP 🟢" : m.state === "down" ? "DOWN 🔴" : "MIXED 🟡";
+  $("flip-state").textContent = "Momentum " + stateLabel + " (3m " + pctSigned(m.r3) + " · 5m " + pctSigned(m.r5) + ")";
+  $("flip-badge").classList.toggle("hidden", !m.flip_watch);
+  const line = (label, flip) => {
+    const diff = price - flip;
+    const verb = diff > 0 ? "↓ fall" : diff < 0 ? "↑ rise" : "at level";
+    return label + " flip " + money(flip) + " · " + verb + " " + money(Math.abs(diff)) + " (" + (Math.abs(diff) / price * 100).toFixed(3) + "%) to cross";
+  };
+  $("flip-r3").textContent = line("3m", m.r3_flip_price);
+  $("flip-r5").textContent = line("5m", m.r5_flip_price);
+  // Nearest flip: the closest flip level. Crossing any level changes the
+  // momentum state, so the nearest level is the next flip.
+  const lvls = [
+    { label: "3m", price: m.r3_flip_price, comp: "r3" },
+    { label: "5m", price: m.r5_flip_price, comp: "r5" },
+  ];
+  let nearest = null;
+  for (const L of lvls) {
+    const dist = Math.abs(price - L.price);
+    if (!nearest || dist < nearest.dist) nearest = { ...L, dist };
+  }
+  const newState = momentumStateAfterFlip(m, nearest.comp);
+  const dir = nearest.price > price ? "rises ↑" : "falls ↓";
+  $("flip-nearest").textContent = "Nearest flip: " + newState + " if BTC " + dir + " " + money(nearest.dist) + " (" + (nearest.dist / price * 100).toFixed(3) + "%) to " + money(nearest.price) + " (" + nearest.label + ")";
+  const lf = m.last_flip;
+  if (!lf) {
+    $("flip-last").textContent = "Last flip: none yet this session.";
+  } else {
+    const mins = Math.max(0, Math.round((Date.now() - Date.parse(lf.at)) / 60000));
+    const ago = mins < 1 ? "just now" : mins < 60 ? mins + " min ago" : Math.floor(mins / 60) + "h " + (mins % 60) + "m ago";
+    $("flip-last").textContent = "Last flip: " + String(lf.from).toUpperCase() + " → " + String(lf.to).toUpperCase() + ", " + ago + ".";
+  }
+}
+
+/* ---------- order flow panel (standalone; v26.5 showed these as Why rows) ---------- */
+function renderFlow(d) {
+  const fp = (d.signal && d.signal.components && d.signal.components.flow_parts) || null;
+  const panel = $("flow-panel");
+  if (!fp || (fp.book == null && fp.flow == null && fp.kbook == null)) { panel.hidden = true; return; }
+  panel.hidden = false;
+  const ffmt = (v) => (v >= 0 ? "+" : "") + Math.round(v * 100) + "%";
+  const dot = (v) => v == null ? "" : (v >= 0 ? "pos" : "neg");
+  const rows = [];
+  if (fp.book != null) rows.push(["Order book", "bids " + ffmt(fp.book) + " vs asks", dot(fp.book)]);
+  if (fp.flow != null) rows.push(["Trade flow", "taker " + ffmt(fp.flow), dot(fp.flow)]);
+  if (fp.kbook != null) rows.push(["Kalshi book", "UP depth " + ffmt(fp.kbook), dot(fp.kbook)]);
+  $("flow-rows").innerHTML = rows.map((r) =>
+    '<div class="why-row"><span>' + r[0] + '</span><b class="' + r[2] + '">' + r[1] + "</b></div>").join("");
+}
+
+/* ---------- scale plan (v26.3, display-only) ---------- */
+function renderScalePlan(d) {
+  const call = d.call || {}, plan = call.scale_plan, panel = $("scale-panel");
+  if (!plan) { panel.hidden = true; return; }
+  panel.hidden = false;
+  $("scale-status").textContent = call.status === "sold"
+    ? "Plan closed — call sold: " + (call.sell_reason || "")
+    : "Active plan";
+  $("scale-side").textContent = "BET " + plan.side_word + " · sealed at " + cents(plan.seal_ask)
+    + " ask · P(" + plan.side_word + ") " + pct1(plan.p_side);
+  const row = (t) => "<tr><td><b>" + t.id + "</b></td><td>" + t.pct + "%</td><td>" + (t.contracts ?? "—") + "</td><td>" + cents(t.price)
+    + "</td><td>" + t.fee.toFixed(2) + "¢</td><td class='fine'>" + t.note + "</td></tr>";
+  $("scale-tranches").innerHTML = plan.tranches.map(row).join("");
+  $("scale-exits").innerHTML = plan.exits.map(row).join("");
+  const sgn = (v) => (v >= 0 ? "+" : "") + v.toFixed(2) + "¢";
+  $("scale-fees").innerHTML = "Plan for <b>" + plan.size + " contracts</b> — fees per contract: plan <b>" + plan.plan_fee_total.toFixed(2) + "¢</b>"
+    + " (entry " + plan.entry_fee.toFixed(2) + "¢ + exit " + plan.exit_fee.toFixed(2) + "¢)"
+    + " vs single-fill <b>" + plan.single_fee_total.toFixed(2) + "¢</b>"
+    + " · net edge after plan fees <b>" + sgn(plan.net_edge_plan) + "</b>"
+    + " (single-fill " + sgn(plan.net_edge_single) + ") · × your contracts"
+    + (plan.note ? "<br><span class='fine'>" + plan.note + "</span>" : "");
 }
 
 /* Call-card meta + sell lines. */
@@ -260,7 +359,171 @@ function restartPoll() {
   S.quickTimer = setInterval(pollQuick, 2000); // 2s: matches the server's SPOT_TTL, 1s polling just re-fetched cached data
 }
 
+/* ---------- v24: paper betting (simulated, localStorage) ---------- */
+const paper = {
+  key: "threaded_paper_v1",
+  bets: [],
+  side: "YES",
+  prevTicker: null,
+  lastPrice: null,
+  lastQuotes: null,
+  lastTarget: null,
+  load() {
+    try { this.bets = JSON.parse(localStorage.getItem(this.key)) || []; }
+    catch (e) { this.bets = []; }
+    // open bets can't be settled after a reload — mark expired, no P&L
+    let dropped = false;
+    this.bets.forEach((b) => {
+      if (b.status === "open") { b.status = "expired"; dropped = true; }
+    });
+    if (dropped) this.save();
+  },
+  save() {
+    try { localStorage.setItem(this.key, JSON.stringify(this.bets.slice(-200))); }
+    catch (e) {}
+  },
+};
+
+function paperMoney(c) {
+  if (c == null || !isFinite(c)) return "—";
+  return (c >= 0 ? "+$" : "−$") + (Math.abs(c) / 100).toFixed(2);
+}
+
+// Display label for a stored side. Sides stay "YES"/"NO" internally (they key
+// off quotes.yes_*/no_* and the settlement comparison); only the label is UP/DOWN.
+const paperSideLabel = (s) => s === "YES" ? "UP" : "DOWN";
+
+// called on every state poll: track ticker rollover, auto-settle finished windows
+function paperTick(d) {
+  const ticker = d.market && d.market.ticker;
+  const price = d.btc && d.btc.price;
+  const target = d.market && d.market.target;
+  if (ticker && paper.prevTicker && ticker !== paper.prevTicker) {
+    let changed = false;
+    paper.bets.forEach((b) => {
+      if (b.status === "open" && b.ticker === paper.prevTicker &&
+          paper.lastPrice != null && b.target != null) {
+        const win = b.side === "YES" ? paper.lastPrice >= b.target : paper.lastPrice < b.target;
+        b.status = "settled";
+        b.settlePx = Math.round(paper.lastPrice);
+        b.win = win;
+        b.pnlC = win ? b.contracts * (100 - b.priceC) : -b.contracts * b.priceC;
+        changed = true;
+      }
+    });
+    if (changed) paper.save();
+  }
+  if (ticker) paper.prevTicker = ticker;
+  if (price != null) paper.lastPrice = price;
+  if (d.quotes) paper.lastQuotes = d.quotes;
+  if (target != null) paper.lastTarget = target;
+}
+
+function paperSetSide(s) {
+  paper.side = s;
+  $("paper-yes").classList.toggle("sel-yes", s === "YES");
+  $("paper-no").classList.toggle("sel-no", s === "NO");
+  const q = paper.lastQuotes;
+  if (q) $("paper-price").placeholder = String(s === "YES" ? q.yes_ask : q.no_ask) + "¢ ask";
+}
+
+function paperPlace() {
+  const q = paper.lastQuotes;
+  if (!q || !paper.prevTicker || paper.lastTarget == null) return;
+  const contracts = Math.max(1, Math.min(10000, parseInt($("paper-contracts").value, 10) || 0));
+  if (!contracts) return;
+  const askC = paper.side === "YES" ? q.yes_ask : q.no_ask;
+  if (askC == null) return;
+  let priceC = Math.round(parseFloat($("paper-price").value));
+  if (!(priceC >= 1 && priceC <= 99)) priceC = askC; // empty = fill at ask
+  paper.bets.push({
+    id: Date.now(), ticker: paper.prevTicker, side: paper.side,
+    contracts: contracts, priceC: priceC, target: paper.lastTarget,
+    placedAt: Date.now(), status: "open",
+  });
+  paper.save();
+  renderPaper();
+}
+
+function paperClose(id) {
+  const b = paper.bets.find((x) => x.id === id);
+  if (!b || b.status !== "open") return;
+  const q = paper.lastQuotes;
+  const bidC = b.side === "YES" ? (q && q.yes_bid) : (q && q.no_bid);
+  if (bidC == null) return;
+  b.status = "closed";
+  b.exitC = bidC;
+  b.pnlC = b.contracts * (bidC - b.priceC);
+  paper.save();
+  renderPaper();
+}
+
+function renderPaper() {
+  const q = paper.lastQuotes;
+  $("paper-yes-price").textContent = q && q.yes_ask != null ? q.yes_ask + "¢" : "—";
+  $("paper-no-price").textContent = q && q.no_ask != null ? q.no_ask + "¢" : "—";
+
+  const open = paper.bets.filter((b) => b.status === "open");
+  const oh = $("paper-open");
+  if (!open.length) { oh.innerHTML = ""; }
+  else {
+    oh.innerHTML = open.map((b) => {
+      let uTxt = "";
+      if (q) {
+        const bidC = b.side === "YES" ? q.yes_bid : q.no_bid;
+        if (bidC != null) {
+          const u = b.contracts * (bidC - b.priceC);
+          uTxt = ' · <b class="' + (u >= 0 ? "pos" : "neg") + '">' + paperMoney(u) + "</b>";
+        }
+      }
+      return '<div class="paper-bet"><span><b class="' + (b.side === "YES" ? "pos" : "neg") + '">' +
+        paperSideLabel(b.side) + "</b> " + b.contracts + " @ " + b.priceC + "¢" + uTxt +
+        '</span><button class="x" data-close="' + b.id + '" title="exit at bid">✕</button></div>';
+    }).join("");
+    oh.querySelectorAll("[data-close]").forEach((el) => {
+      el.onclick = () => paperClose(parseInt(el.getAttribute("data-close"), 10));
+    });
+  }
+
+  const done = paper.bets.filter((b) => b.status !== "open").slice(-8).reverse();
+  $("paper-history").innerHTML = done.map((b) => {
+    let res;
+    if (b.status === "expired") res = '<span class="fine">expired</span>';
+    else {
+      const w = b.status === "settled" ? b.win : b.pnlC > 0;
+      res = '<b class="' + (w ? "pos" : "neg") + '">' +
+        (b.status === "settled" ? (b.win ? "WIN" : "LOSS") : "EXIT") + " " + paperMoney(b.pnlC) + "</b>";
+    }
+    const extra = b.status === "settled" ? ' <span class="fine">settle $' + b.settlePx + "</span>" : "";
+    return '<div class="paper-bet"><span><b class="' + (b.side === "YES" ? "pos" : "neg") + '">' +
+      paperSideLabel(b.side) + "</b> " + b.contracts + " @ " + b.priceC + "¢" + extra + "</span>" + res + "</div>";
+  }).join("");
+
+  const scored = paper.bets.filter((b) => (b.status === "settled" || b.status === "closed") && b.pnlC != null);
+  if (!scored.length) {
+    $("paper-totals").innerHTML = '<span class="fine">No settled bets yet — paper trade the signals and watch this space.</span>';
+  } else {
+    const tot = scored.reduce((a, b) => a + b.pnlC, 0);
+    const wins = scored.filter((b) => b.pnlC > 0).length;
+    $("paper-totals").innerHTML = 'Total <b class="' + (tot >= 0 ? "pos" : "neg") + '">' + paperMoney(tot) +
+      "</b> · " + wins + "W-" + (scored.length - wins) + "L · " + Math.round(wins / scored.length * 100) + "%";
+  }
+}
+
+function paperInit() {
+  paper.load();
+  paperSetSide("YES");
+  $("paper-yes").onclick = () => paperSetSide("YES");
+  $("paper-no").onclick = () => paperSetSide("NO");
+  $("paper-place").onclick = paperPlace;
+  $("paper-clear").onclick = (e) => {
+    e.preventDefault();
+    if (confirm("Clear all paper betting history?")) { paper.bets = []; paper.save(); renderPaper(); }
+  };
+}
+
 /* ---------- boot ---------- */
+paperInit();
 restartPoll();
 S.countdownTimer = setInterval(tickCountdown, 1000);
 pollState();
