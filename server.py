@@ -1566,7 +1566,7 @@ def api_candles():
 
 @app.route("/api/version")
 def api_version():
-    return jsonify({"version": "v26.5"})
+    return jsonify({"version": "v26.6"})
 
 
 @app.route("/")
@@ -1603,12 +1603,8 @@ def record_page():
     calls = call_record.load_calls()
     summary = call_record.record_summary(calls)
     envelope = call_record.export_envelope()
-    archived = call_record.load_archived_calls(calls)
-    live = call_record.load_live_calls(calls)
     return render_template("record.html", summary=summary,
                            calls=list(reversed(calls[-40:])),
-                           archived_calls=list(reversed(archived[-40:])),
-                           live_calls=list(reversed(live[-40:])),
                            envelope=envelope,
                            public_key=call_record.public_key_b64(),
                            archived_public_key=call_record.archive_public_key())
@@ -1616,10 +1612,11 @@ def record_page():
 
 @app.route("/api/record/export.jsonl")
 def record_export_jsonl():
-    # Two-part download: ARCHIVED canonical JSONL (first
-    # archived_count lines) followed by LIVE canonical JSONL. Each
-    # section hashes to its own digest in export.json — the stable
-    # key's signature covers the live section only, never the archive.
+    # ONE JSONL: all rows, oldest first. The archived (pre-rotation)
+    # rows come first because they are the oldest; the live rows
+    # follow. Each part hashes to its own digest in export.json — the
+    # stable key's signature covers the live part only, never the
+    # archived rows.
     calls = call_record.load_calls()
     archived = call_record.load_archived_calls(calls)
     live = call_record.load_live_calls(calls)
@@ -1676,5 +1673,5 @@ if __name__ == "__main__":
     # Locally it isn't -> loopback only, same as before.
     port = int(os.environ.get("PORT", "5000"))
     host = "0.0.0.0" if "PORT" in os.environ else "127.0.0.1"
-    print(f"Threaded v26.5 - serving on http://{host}:{port}")
+    print(f"Threaded v26.6 - serving on http://{host}:{port}")
     app.run(host=host, port=port, threaded=True)

@@ -7,20 +7,23 @@ Threaded's OWN calls only — never another product's numbers):
   Render redeploys. The JSONL file is kept as a local backup only.
   Every sealed call counts; there is no "practice" concept — a call
   that fires is graded, win or lose.
-- TWO SECTIONS. (a) ARCHIVED: the 46 pre-rotation calls graded before
-  the v26.5 deploy, imported verbatim from the bundled archive asset
+- ONE RECORD, TWO VERIFICATION BLOCKS. The record is a single
+  list (oldest first) with one combined summary. It is verified in
+  two blocks: (a) the first N rows are the pre-rotation calls,
+  imported verbatim from the bundled archive asset
   (threaded_record_archive.jsonl + .meta.json — public data, already
   published on /record). They are NEVER re-signed, NEVER backdated,
   and NEVER recomputed under new fee math. Their authenticity is
   verified against the OLD public key + the ORIGINAL digest +
-  signature in the archive meta, not the stable key. (b) LIVE: calls
-  graded after the v26.5 deploy, signed with the stable key.
-- The export is hash-anchored per section: export.json publishes the
-  SHA-256 digest of the LIVE canonical JSONL (signed by the stable
-  key) AND the archived digest + original signature + old public key.
-  Anyone can verify each section against its own key. The stable key's
-  signature covers ONLY the live rows — it never appears to cover
-  the archived rows.
+  signature in the archive meta, not the stable key. (b) The
+  remaining rows are calls graded after the v26.5 deploy, signed
+  with the stable key.
+- The export is hash-anchored per block: export.json publishes the
+  SHA-256 digest of the current-key rows (signed by the stable
+  key) AND the archived digest + original signature + old public
+  key. Anyone can verify each block against its own key. The stable
+  key's signature covers ONLY the current-key rows — it never
+  appears to cover the pre-rotation rows.
 - The hex digest is signed with an Ed25519 keypair. In production the
   private key comes from the RECORD_SIGNING_KEY env var (base64 PEM) —
   a deploy without it fails loud at startup, so calls are never graded
@@ -165,8 +168,10 @@ def _row_to_dict(row):
 def _row_with_flag(row):
     """A DB RecordedCall -> plain dict with the 13 fields + `_archived`.
 
-    `_archived` is metadata for section splits/summaries; it never
-    enters canonical JSONL because _row_to_dict strips it."""
+    `_archived` is inert metadata (True = pre-rotation row) used only
+    to split the export for per-block verification; it never enters
+    canonical JSONL because _row_to_dict strips it. The /record page
+    shows one list — the flag is not surfaced as a section."""
     d = _row_to_dict(row)
     d["_archived"] = bool(getattr(row, "archived", False))
     return d
@@ -605,23 +610,26 @@ def public_key_b64():
 
 
 def export_envelope():
-    """Two-part envelope: {digestSha256, signature, public_key,
-    count, live_count, archived_count, archived: {...}, generated_at}.
+    """One envelope: {count, summary, live, archived, generated_at}.
 
-    The export.jsonl download is the ARCHIVED canonical JSONL
-    (first `archived_count` lines) followed by the LIVE canonical
-    JSONL (remaining lines). Verification is per-section:
-    - LIVE: `digestSha256` is the SHA-256 of the live section only,
-      and `signature` is the STABLE key's Ed25519 over that hex digest
-      (as text, no trailing newline). The stable key NEVER signs the
-      archived rows — its signature must not be read as covering them.
-    - ARCHIVED: `archived.digestSha256` is the SHA-256 of the archived
-      section (equal to the original published digest), and
-      `archived.signature` is the ORIGINAL signature over it, verified
-      against `archived.public_key` (the old key). The archived rows
-      are never re-signed.
-    `signature` is None when signing is unavailable — the hashes +
-    Kalshi cross-check still verify the file in that case."""
+    The export.jsonl download is ONE list (oldest first): the
+    pre-rotation rows first (they are the oldest), then the
+    current-key rows. Verification is per block:
+    - `live`: `digestSha256` is the SHA-256 of the current-key rows
+      only, `signature` is the STABLE key's Ed25519 over that hex
+      digest (as text, no trailing newline), `public_key` is the
+      stable key, `count` is the number of current-key rows. The
+      stable key NEVER signs the pre-rotation rows — its signature
+      must not be read as covering them.
+    - `archived`: `digestSha256` is the SHA-256 of the pre-rotation
+      rows (equal to the original published digest), `signature` is
+      the ORIGINAL signature over it, verified against
+      `public_key` (the old key). The pre-rotation rows are never
+      re-signed.
+    - `summary` is the COMBINED summary (all rows), so the envelope
+      alone states the record's totals.
+    `live.signature` is None when signing is unavailable — the
+    hashes + Kalshi cross-check still verify the file in that case."""
     calls = load_calls()
     archived = load_archived_calls(calls)
     live = load_live_calls(calls)
@@ -636,20 +644,27 @@ def export_envelope():
         except Exception:
             signature = None
     meta = archive_meta() or {}
-    archived_block = {
-        "public_key": meta.get("public_key"),
-        "digestSha256": meta.get("digestSha256"),
-        "signature": meta.get("signature"),
-        "count": len(archived),
-        "archived_at": meta.get("archived_at"),
-    }
+    combined = record_summary(calls)
+    combined_summary = {k: combined[k] for k in (
+        "total", "wins", "losses", "win_rate", "strong_total",
+        "strong_wins", "strong_win_rate", "gross_ev_c", "net_ev_c",
+        "since", "last_graded_at",
+    )}
     return {
-        "digestSha256": live_digest,
-        "signature": signature,
-        "public_key": public_key_b64(),
         "count": len(calls),
-        "live_count": len(live),
-        "archived_count": len(archived),
-        "archived": archived_block,
+        "summary": combined_summary,
+        "live": {
+            "digestSha256": live_digest,
+            "signature": signature,
+            "public_key": public_key_b64(),
+            "count": len(live),
+        },
+        "archived": {
+            "public_key": meta.get("public_key"),
+            "digestSha256": meta.get("digestSha256"),
+            "signature": meta.get("signature"),
+            "count": len(archived),
+            "archived_at": meta.get("archived_at"),
+        },
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
     }
