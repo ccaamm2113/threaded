@@ -11,16 +11,19 @@
     <div class="card"><div class="card-label">Strong calls</div><div class="card-value">{{ "%.1f"|format(summary.strong_win_rate * 100) if summary.strong_win_rate is not none else "—" }}%</div><div class="card-sub">{{ summary.strong_wins }} / {{ summary.strong_total }}</div></div>
     <div class="card"><div class="card-label">Net edge / call</div><div class="card-value">{{ "%+.2f"|format(summary.net_ev_c) if summary.net_ev_c is not none else "—" }}¢</div><div class="card-sub">after Kalshi taker fee{% if summary.gross_ev_c is not none %} · gross {{ "%+.2f"|format(summary.gross_ev_c) }}¢{% endif %}</div></div>
   </div>
-  <p class="fine">Net edge assumes buying the called side at the seal ask and holding to settlement, minus the Kalshi taker fee. It is a measurement of the record, not a promise. Past results never guarantee future ones.</p>
+  <p class="fine">Net edge assumes buying the called side at the seal ask and holding to settlement, minus the Kalshi taker fee. Live rows use the current fee math (rounded up to the next cent per order, 1-contract case); archived rows keep the net edge they were originally published under. It is a measurement of the record, not a promise. Past results never guarantee future ones.</p>
+  <p class="fine"><b>Two sections, one record.</b> The <b>archived</b> calls ({{ summary.archived.total }}) were graded before the v26.5 deploy under a key lost on redeploy — they were imported verbatim into the record, never re-signed, and verify against the old public key below. The <b>live</b> calls ({{ summary.live.total }}) are graded under the stable signing key. From v26.5 on, the key lives in an env var and redeploys never rotate it or wipe the record.</p>
+  <p class="fine"><b>By section:</b> archived — {{ summary.archived.wins }} won · {{ summary.archived.losses }} lost · {{ "%.1f"|format(summary.archived.win_rate * 100) if summary.archived.win_rate is not none else "—" }}% win rate · net {{ "%+.2f"|format(summary.archived.net_ev_c) if summary.archived.net_ev_c is not none else "—" }}¢/call &nbsp;|&nbsp; live — {{ summary.live.wins }} won · {{ summary.live.losses }} lost · {{ "%.1f"|format(summary.live.win_rate * 100) if summary.live.win_rate is not none else "—" }}% win rate · net {{ "%+.2f"|format(summary.live.net_ev_c) if summary.live.net_ev_c is not none else "—" }}¢/call</p>
 
   {% if summary.total == 0 %}
   <div class="alert">No graded calls yet — the record starts with v26 and fills from live calls. Check back after a few windows.</div>
   {% else %}
-  <h2>Latest graded calls</h2>
+  {% if live_calls %}
+  <h2>Live calls (v26.5+, stable key)</h2>
   <table class="admin-table">
     <thead><tr><th>Sealed (UTC)</th><th>Call</th><th>Ask at seal</th><th>Blended P</th><th>Result</th><th>Outcome</th><th>Strong</th></tr></thead>
     <tbody>
-    {% for c in calls %}
+    {% for c in live_calls %}
       <tr>
         <td>{{ c.sealed_at or "—" }}</td>
         <td><b class="{{ 'pos' if c.side == 'UP' else 'neg' }}">{{ c.side }}</b></td>
@@ -33,31 +36,62 @@
     {% endfor %}
     </tbody>
   </table>
-  <p class="fine">Showing the latest {{ calls|length }} calls. The full record is in the export below.</p>
+  <p class="fine">Showing the latest {{ live_calls|length }} live calls. The full record is in the export below.</p>
+  {% endif %}
+  {% if archived_calls %}
+  <h2>Archived calls (pre-rotation, original key)</h2>
+  <table class="admin-table">
+    <thead><tr><th>Sealed (UTC)</th><th>Call</th><th>Ask at seal</th><th>Blended P</th><th>Result</th><th>Outcome</th><th>Strong</th></tr></thead>
+    <tbody>
+    {% for c in archived_calls %}
+      <tr>
+        <td>{{ c.sealed_at or "—" }}</td>
+        <td><b class="{{ 'pos' if c.side == 'UP' else 'neg' }}">{{ c.side }}</b></td>
+        <td>{{ c.seal_ask_c }}¢</td>
+        <td>{{ "%.0f"|format(c.seal_blended * 100) if c.seal_blended is not none else "—" }}%</td>
+        <td>{{ c.result }}</td>
+        <td><b class="{{ 'pos' if c.won else 'neg' }}">{{ "WIN" if c.won else "LOSS" }}</b></td>
+        <td>{{ "★" if c.strong else "" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="fine">Showing the latest {{ archived_calls|length }} archived calls. These rows were imported verbatim from the pre-rotation record and are never re-signed.</p>
+  {% endif %}
   {% endif %}
 
   <h2>Check it yourself</h2>
-  <p>Download the full record and verify it three ways: the file matches its published hash, the hash carries Threaded's signature, and any row matches Kalshi's own settlement record for that market.</p>
+  <p>Download the full record and verify it per section: each section matches its own published hash, and each hash carries that section's own signature. The stable key signs <b>only the live section</b> — it never covers the archived rows. Any row can also be checked against Kalshi's own settlement record for that market.</p>
   <div class="record-verify">
     <p><b>1. Download every call</b></p>
     <pre>curl -sS -o record.jsonl {{ request.host_url }}api/record/export.jsonl
 curl -sS -o export.json {{ request.host_url }}api/record/export.json</pre>
-    <p><b>2. Nothing was edited</b> — the hash must equal <code>digestSha256</code> in export.json:</p>
-    <pre>sha256sum record.jsonl          # Linux
-shasum -a 256 record.jsonl      # macOS
-# compare with:  jq -r .digestSha256 export.json</pre>
+    <p><b>2. Split the download</b> — the first <code>archived_count</code> lines are the archived section, the rest are the live section:</p>
+    <pre>N=$(jq -r .archived_count export.json)
+head -n "$N" record.jsonl &gt; archived.jsonl
+tail -n +"$((N + 1))" record.jsonl &gt; live.jsonl</pre>
+    <p><b>3. Nothing was edited</b> — each section's hash must equal its published digest:</p>
+    <pre>sha256sum archived.jsonl   # compare with: jq -r .archived.digestSha256 export.json
+sha256sum live.jsonl       # compare with: jq -r .digestSha256 export.json</pre>
     {% if envelope.signature %}
-    <p><b>3. It really came from Threaded</b> — verify the Ed25519 signature over the hex digest (as text, no trailing newline):</p>
+    <p><b>4. It really came from Threaded</b> — verify each Ed25519 signature over its hex digest (as text, no trailing newline). Live section, stable key:</p>
     <pre>curl -sS {{ request.host_url }}api/record/public-key &gt; pub.b64
 { echo "-----BEGIN PUBLIC KEY-----"; fold -w 64 pub.b64; echo; echo "-----END PUBLIC KEY-----"; } &gt; pub.pem
-printf '%s' "$(openssl dgst -sha256 -r record.jsonl | cut -d' ' -f1)" &gt; digest.txt
+printf '%s' "$(openssl dgst -sha256 -r live.jsonl | cut -d' ' -f1)" &gt; digest.txt
 jq -r .signature export.json | base64 -d &gt; sig.bin
 openssl pkeyutl -verify -pubin -inkey pub.pem -rawin -in digest.txt -sigfile sig.bin
 # expected: Signature Verified Successfully</pre>
+    <p>Archived section, original (pre-rotation) key — the key comes from <code>export.json</code>, not the live endpoint:</p>
+    <pre>jq -r .archived.public_key export.json &gt; oldpub.b64
+{ echo "-----BEGIN PUBLIC KEY-----"; fold -w 64 oldpub.b64; echo; echo "-----END PUBLIC KEY-----"; } &gt; oldpub.pem
+printf '%s' "$(openssl dgst -sha256 -r archived.jsonl | cut -d' ' -f1)" &gt; olddigest.txt
+jq -r .archived.signature export.json | base64 -d &gt; oldsig.bin
+openssl pkeyutl -verify -pubin -inkey oldpub.pem -rawin -in olddigest.txt -sigfile oldsig.bin
+# expected: Signature Verified Successfully</pre>
     {% else %}
-    <p><b>3. Signature:</b> not configured on this server (signing library unavailable) — steps 2 and 4 still verify the file.</p>
+    <p><b>4. Signature:</b> not configured on this server (signing library unavailable) — steps 3 and 5 still verify the file.</p>
     {% endif %}
-    <p><b>4. Kalshi agrees</b> — pick any row and ask Kalshi for that market (<code>yes</code> = UP won, <code>no</code> = DOWN won):</p>
+    <p><b>5. Kalshi agrees</b> — pick any row and ask Kalshi for that market (<code>yes</code> = UP won, <code>no</code> = DOWN won):</p>
     <pre>curl -sS "https://api.elections.kalshi.com/trade-api/v2/markets/&lt;TICKER&gt;" | jq '.market | {ticker, result}'</pre>
   </div>
 
@@ -67,6 +101,7 @@ openssl pkeyutl -verify -pubin -inkey pub.pem -rawin -in digest.txt -sigfile sig
     <li><b>Strong</b> means the called side's ask was 75¢ or more at the seal.</li>
     <li><b>Graded at settlement.</b> Kalshi's own result decides win/loss; if Kalshi's API is unreachable at grading time, the last 1-minute candle close vs the target is used instead (marked <code>grade_source: candle</code> in the export).</li>
     <li><b>Every sealed call counts.</b> There is no "practice" bucket and no deletions. A call that fires is graded, win or lose.</li>
+    <li><b>The archive is preserved, not rewritten.</b> Pre-rotation calls were imported verbatim into the archived section — same rows, same original signature, same originally published net edge. They are never re-signed, backdated, or re-priced under new fee math.</li>
     <li><b>Research only.</b> This record measures Threaded's calls. It is not financial advice, and past results say nothing about the next window.</li>
   </ul>
   <p><a href="/app">Back to the dashboard →</a></p>

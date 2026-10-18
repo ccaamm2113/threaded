@@ -34,6 +34,7 @@ app.config["SQLALCHEMY_DATABASE_URI"] = config.DATABASE_URL
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db.init_app(app)
+call_record.set_app(app)
 
 from flask_login import LoginManager, current_user  # noqa: E402
 from functools import wraps  # noqa: E402
@@ -87,6 +88,12 @@ def inject_admin():
 with app.app_context():
     db.create_all()
 
+# v26.5: in production the record signing key must come from
+# RECORD_SIGNING_KEY. Fail loud at boot — a deploy without it must never
+# grade calls with an ephemeral key. In dev this loads (or generates)
+# the local instance/ key.
+call_record.require_signing_key()
+
 # --------------------------------------------------------------------------
 # Simple in-memory time-based caches (replaces st.cache_data)
 # --------------------------------------------------------------------------
@@ -109,7 +116,8 @@ def cached(key, ttl_seconds, fn):
 # The call stays latched until a sell trigger fires or the window rolls;
 # at rollover the sealed call is graded (Kalshi result, candle fallback)
 # and appended to the public record. In-memory state is lost on restart —
-# only an in-flight call is lost; graded calls live in the JSONL record.
+# only an in-flight call is lost; graded calls live in the DB-backed
+# record (JSONL backup).
 # --------------------------------------------------------------------------
 CALL_W_TARGET = 0.85   # weight on the empirical history vote (target_p)
 CALL_W_PARAM = 0.15    # weight on the parametric vote (param_p)
@@ -660,16 +668,21 @@ def _machine_step(st, ev, now_iso, close_epoch_ms, current, minutes_left):
     # status "sold": frozen until the window rolls over
 
 
-def compute_scale_plan(side, seal_ask, seal_blended):
-    """v26.3 Scale Plan (display-only guidance; Threaded never places trades).
+def compute_scale_plan(side, seal_ask, seal_blended, size=10):
+    """v26.3 Scale Plan, v26.5 fee fix (display-only guidance; Threaded
+    never places trades).
 
     Splits a sealed call into entry tranches + an exit ladder so the user
-    scales in/out instead of going all-in at one price. All fees are per
-    1 contract, position-weighted: each fill's fee is weighted by its
-    share of the position, so the plan total is comparable to a single
-    fill. Kalshi fees are per contract, not per fill, so slicing barely
-    changes total fees — the real cost of slicing is fills that never
-    happen (T2) or confirmation that never comes (T3), not fees.
+    scales in/out instead of going all-in at one price. The plan is
+    shown for a position of `size` contracts (default 10) with WHOLE-
+    CONTRACT tranche counts — contracts don't divide, so a 50/30/20
+    split needs >= 10 contracts to execute as shown.
+
+    Fees are honest per-order fees: Kalshi rounds EACH order's fee UP to
+    the next cent, so every tranche/exit pays its own rounded fee.
+    Slicing can therefore cost slightly more (or less, when a tranche
+    lands at a cheaper price) than a single fill — the summary shows
+    both totals, per contract, so the comparison is real.
 
     Net edge is conservative: it charges the full round-trip fees (entry
     + exit) against the hold-to-settlement payoff (100c on win). Holding
@@ -682,12 +695,22 @@ def compute_scale_plan(side, seal_ask, seal_blended):
     try:
         seal_ask = float(seal_ask)
         seal_blended = float(seal_blended)
+        size = int(size)
     except (TypeError, ValueError):
         return None
     if not (0.0 < seal_ask < 100.0) or not (0.0 <= seal_blended <= 1.0):
         return None
+    if size <= 0:
+        return None
     p_side = seal_blended if side == "up" else 1.0 - seal_blended
     side_word = "UP" if side == "up" else "DOWN"
+
+    # Whole-contract counts (round-half-up, remainder to the last tranche).
+    t1_n = int(size * 0.5 + 0.5)
+    t2_n = int(size * 0.3 + 0.5)
+    t3_n = size - t1_n - t2_n
+    e1_n = size // 2
+    e2_n = size - e1_n
 
     t1_price = seal_ask
     t2_price = max(1.0, seal_ask - 3.0)  # dip limit; never below 1c
@@ -701,33 +724,43 @@ def compute_scale_plan(side, seal_ask, seal_blended):
                    else "Partial target (seal ask + 10¢)")
     e2_price = seal_ask  # reference for the remaining exit (est.; actual exit price varies)
 
-    def fee(price):
-        return kalshi_taker_fee_cents(price) or 0.0
+    def fill_fee(price, n):
+        """Total fee (cents) for one order of n contracts at price."""
+        if n <= 0:
+            return 0.0
+        return (kalshi_taker_fee_cents(price, contracts=n) or 0.0) * n
+
+    def fill(price, n, pct, note, fid):
+        total = fill_fee(price, n)
+        return {"id": fid, "pct": pct, "contracts": n, "price": price,
+                "fee": (total / n) if n else 0.0, "fee_total": total,
+                "note": note if n else (note + " (0 contracts at this size — skipped)")}
 
     tranches = [
-        {"id": "T1", "pct": 50, "price": t1_price, "fee": fee(t1_price),
-         "note": "At seal ask — market, immediate"},
-        {"id": "T2", "pct": 30, "price": t2_price, "fee": fee(t2_price),
-         "note": "Dip limit — only if it fills, else skip"},
-        {"id": "T3", "pct": 20, "price": t3_price, "fee": fee(t3_price),
-         "note": "Confirmation — only if call still valid after 2 more polls"},
+        fill(t1_price, t1_n, 50, "At seal ask — market, immediate", "T1"),
+        fill(t2_price, t2_n, 30, "Dip limit — only if it fills, else skip", "T2"),
+        fill(t3_price, t3_n, 20, "Confirmation — only if call still valid after 2 more polls", "T3"),
     ]
     exits = [
-        {"id": "E1", "pct": 50, "price": e1_price, "fee": fee(e1_price),
-         "note": e1_note},
-        {"id": "E2", "pct": 50, "price": e2_price, "fee": fee(e2_price),
-         "note": "Remaining — at expiry or on a sell trigger (fee est. at seal ask)"},
+        fill(e1_price, e1_n, 50, e1_note, "E1"),
+        fill(e2_price, e2_n, 50, "Remaining — at expiry or on a sell trigger (fee est. at seal ask)", "E2"),
     ]
-    entry_fee = sum(t["pct"] / 100.0 * t["fee"] for t in tranches)
-    exit_fee = sum(e["pct"] / 100.0 * e["fee"] for e in exits)
+    entry_total = sum(t["fee_total"] for t in tranches)
+    exit_total = sum(e["fee_total"] for e in exits)
+    entry_fee = entry_total / size  # per contract
+    exit_fee = exit_total / size  # per contract
     plan_fee_total = entry_fee + exit_fee
-    single_fee_total = fee(seal_ask) + fee(seal_ask)  # 1 entry + 1 exit at seal ask
-    weighted_entry = sum(t["pct"] / 100.0 * t["price"] for t in tranches)
+    # Single fill: 1 entry + 1 exit, whole position, at the seal ask.
+    single_fee_total = 2.0 * (kalshi_taker_fee_cents(seal_ask, contracts=size) or 0.0)
+    weighted_entry = sum(t["contracts"] / size * t["price"] for t in tranches)
     net_edge_plan = p_side * 100.0 - weighted_entry - plan_fee_total
     net_edge_single = p_side * 100.0 - seal_ask - single_fee_total
     return {
         "side": side, "side_word": side_word, "seal_ask": seal_ask,
-        "p_side": p_side, "tranches": tranches, "exits": exits,
+        "p_side": p_side, "size": size,
+        "note": ("Plan shown for a %d-contract position — needs ≥10 contracts "
+                 "to execute as shown (contracts don't divide)." % size),
+        "tranches": tranches, "exits": exits,
         "entry_fee": entry_fee, "exit_fee": exit_fee,
         "plan_fee_total": plan_fee_total, "single_fee_total": single_fee_total,
         "weighted_entry": weighted_entry,
@@ -1533,7 +1566,7 @@ def api_candles():
 
 @app.route("/api/version")
 def api_version():
-    return jsonify({"version": "v26.4"})
+    return jsonify({"version": "v26.5"})
 
 
 @app.route("/")
@@ -1570,16 +1603,28 @@ def record_page():
     calls = call_record.load_calls()
     summary = call_record.record_summary(calls)
     envelope = call_record.export_envelope()
+    archived = call_record.load_archived_calls(calls)
+    live = call_record.load_live_calls(calls)
     return render_template("record.html", summary=summary,
                            calls=list(reversed(calls[-40:])),
+                           archived_calls=list(reversed(archived[-40:])),
+                           live_calls=list(reversed(live[-40:])),
                            envelope=envelope,
-                           public_key=call_record.public_key_b64())
+                           public_key=call_record.public_key_b64(),
+                           archived_public_key=call_record.archive_public_key())
 
 
 @app.route("/api/record/export.jsonl")
 def record_export_jsonl():
+    # Two-part download: ARCHIVED canonical JSONL (first
+    # archived_count lines) followed by LIVE canonical JSONL. Each
+    # section hashes to its own digest in export.json — the stable
+    # key's signature covers the live section only, never the archive.
     calls = call_record.load_calls()
-    body = "".join(json.dumps(c, sort_keys=True) + "\n" for c in calls)
+    archived = call_record.load_archived_calls(calls)
+    live = call_record.load_live_calls(calls)
+    body = (call_record.canonical_jsonl(archived)
+            + call_record.canonical_jsonl(live)).decode("utf-8")
     return Response(body, mimetype="application/x-ndjson",
                     headers={"Content-Disposition": "attachment; filename=threaded_record.jsonl"})
 
@@ -1631,5 +1676,5 @@ if __name__ == "__main__":
     # Locally it isn't -> loopback only, same as before.
     port = int(os.environ.get("PORT", "5000"))
     host = "0.0.0.0" if "PORT" in os.environ else "127.0.0.1"
-    print(f"Threaded v26.4 - serving on http://{host}:{port}")
+    print(f"Threaded v26.5 - serving on http://{host}:{port}")
     app.run(host=host, port=port, threaded=True)

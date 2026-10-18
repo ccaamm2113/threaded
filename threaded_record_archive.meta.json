@@ -1,0 +1,21 @@
+{
+ "public_key": "MCowBQYDK2VwAyEA+qvILFDfqDjVblQXegJCfJmcL49Ze9c7UDHMPE3bHPU=",
+ "digestSha256": "e5732b23e971579578fed0656f20a165a91a5b56d832f0da67f9eaf2719a8075",
+ "signature": "iNaAobBKlKW8OSMGVrGzpzOj2Dz5v0CcWcTrr1Snx6kEibp8Rc9933QZmj+Ba/Omm78PkfBCscHIBJSG1s/4Ag==",
+ "count": 47,
+ "archived_at": "2026-10-18 14:04 UTC",
+ "source": "https://threaded-btc-analyzer.onrender.com/api/record/export.jsonl (public endpoint, fetched 2026-10-18)",
+ "original_summary": {
+  "gross_ev_c": 4.914893617021277,
+  "last_graded_at": "2026-10-18 14:00:27 UTC",
+  "losses": 10,
+  "net_ev_c": 3.5976574468085087,
+  "since": "2026-10-17 16:00:19 UTC",
+  "strong_total": 21,
+  "strong_win_rate": 0.9523809523809523,
+  "strong_wins": 20,
+  "total": 47,
+  "win_rate": 0.7872340425531915,
+  "wins": 37
+ }
+}

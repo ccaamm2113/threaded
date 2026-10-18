@@ -27,6 +27,12 @@ PLAN_PRICE_DISPLAY_DAILY = _req("PLAN_PRICE_DISPLAY_DAILY", "$10/day")
 # Local dev: START_WEBSITE.bat sets DEV_MODE=1 to skip login/paywall locally
 DEV_MODE = _req("DEV_MODE", "0") == "1"
 
+# Public-record signing key (v26.5): base64 of the PEM Ed25519 private key.
+# Generated once by Cam (never committed, never in chat) and pasted into
+# Render env vars. Required in production — a deploy without it must fail
+# loud at startup rather than grade calls with an ephemeral key.
+RECORD_SIGNING_KEY = _req("RECORD_SIGNING_KEY", "")
+
 # Discord automation (see DISCORD.md)
 DISCORD_BOT_TOKEN = _req("DISCORD_BOT_TOKEN", "")
 DISCORD_GUILD_ID = _req("DISCORD_GUILD_ID", "")

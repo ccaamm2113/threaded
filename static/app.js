@@ -121,16 +121,17 @@ function renderScalePlan(d) {
     : "Active plan";
   $("scale-side").textContent = "BET " + plan.side_word + " · sealed at " + cents(plan.seal_ask)
     + " ask · P(" + plan.side_word + ") " + pct1(plan.p_side);
-  const row = (t) => "<tr><td><b>" + t.id + "</b></td><td>" + t.pct + "%</td><td>" + cents(t.price)
+  const row = (t) => "<tr><td><b>" + t.id + "</b></td><td>" + t.pct + "%</td><td>" + (t.contracts ?? "—") + "</td><td>" + cents(t.price)
     + "</td><td>" + t.fee.toFixed(2) + "¢</td><td class='fine'>" + t.note + "</td></tr>";
   $("scale-tranches").innerHTML = plan.tranches.map(row).join("");
   $("scale-exits").innerHTML = plan.exits.map(row).join("");
   const sgn = (v) => (v >= 0 ? "+" : "") + v.toFixed(2) + "¢";
-  $("scale-fees").innerHTML = "Fees per contract: plan <b>" + plan.plan_fee_total.toFixed(2) + "¢</b>"
+  $("scale-fees").innerHTML = "Plan for <b>" + plan.size + " contracts</b> — fees per contract: plan <b>" + plan.plan_fee_total.toFixed(2) + "¢</b>"
     + " (entry " + plan.entry_fee.toFixed(2) + "¢ + exit " + plan.exit_fee.toFixed(2) + "¢)"
     + " vs single-fill <b>" + plan.single_fee_total.toFixed(2) + "¢</b>"
     + " · net edge after plan fees <b>" + sgn(plan.net_edge_plan) + "</b>"
-    + " (single-fill " + sgn(plan.net_edge_single) + ") · × your contracts";
+    + " (single-fill " + sgn(plan.net_edge_single) + ") · × your contracts"
+    + (plan.note ? "<br><span class='fine'>" + plan.note + "</span>" : "");
 }
 
 /* ---------- momentum flip state (shared by Flip Watch + chart overlay) ---------- */

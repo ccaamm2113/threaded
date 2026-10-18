@@ -51,3 +51,33 @@ class User(UserMixin, db.Model):
     def _token_valid(stored, expires, given):
         return (stored and expires and stored == given
                 and datetime.utcnow() < expires)
+
+
+class RecordedCall(db.Model):
+    """One graded call in the public record (v26.5, DB-backed).
+
+    The 13 canonical columns match exactly the fields
+    _grade_previous_call builds. `archived` is metadata, NOT part of
+    the canonical row: archived=True marks a pre-rotation call imported
+    verbatim from the archive asset (verified against the OLD public
+    key, never re-signed); archived=False marks a live call graded
+    under the stable RECORD_SIGNING_KEY. Unique on ticker: one sealed
+    call per window, so a double-grade can never duplicate a row.
+    Created automatically by db.create_all().
+    """
+    __tablename__ = "recorded_calls"
+    id = db.Column(db.Integer, primary_key=True)
+    ticker = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    archived = db.Column(db.Boolean, default=False, nullable=False)
+    close_epoch_ms = db.Column(db.BigInteger, nullable=True)
+    side = db.Column(db.String(8), nullable=True)
+    sealed_at = db.Column(db.String(64), nullable=True)
+    seal_ask_c = db.Column(db.Float, nullable=True)
+    seal_blended = db.Column(db.Float, nullable=True)
+    seal_btc_price = db.Column(db.Float, nullable=True)
+    target = db.Column(db.Float, nullable=True)
+    result = db.Column(db.String(8), nullable=True)
+    won = db.Column(db.Boolean, nullable=True)
+    strong = db.Column(db.Boolean, nullable=True)
+    graded_at = db.Column(db.String(64), nullable=True)
+    grade_source = db.Column(db.String(16), nullable=True)
