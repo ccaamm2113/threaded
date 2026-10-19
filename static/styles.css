@@ -570,3 +570,21 @@ footer { padding: 8px; font-size: .76rem; }
 .paper-bet .x { cursor: pointer; color: var(--mut); border: none; background: none; font-size: 14px; padding: 0 2px; }
 .paper-bet .x:hover { color: var(--down); }
 .paper-totals { font-size: 13px; font-weight: 700; margin: 4px 0; font-variant-numeric: tabular-nums; }
+
+/* ---- v26.10: four dashboard windows (market / chart / signals / trade) ---- */
+.window {
+  background: var(--glass); border: 1px solid var(--card-border);
+  border-radius: var(--r-lg); padding: 16px 20px; margin: 0 0 14px;
+  box-shadow: var(--shadow); }
+.window-head { font-size: 1.05rem; font-weight: 800; margin: 0 0 10px; letter-spacing: .2px; }
+.window-head .fine { font-weight: 500; }
+/* Sub-blocks inside a window share one box: a dashed rule travels with the
+   block, so no stray divider shows when a conditionally-hidden block hides. */
+.win-sub { border-top: 1px dashed rgba(255,255,255,.12); padding-top: 12px; margin-top: 12px; }
+/* Merged panels lose their own boxes inside a window. */
+.window .why-panel, .window .flip-panel, .window .scale-panel, .window .paper-panel {
+  background: transparent; border: none; padding: 0; margin: 0; box-shadow: none; }
+.window .scalp-panel { margin-top: 0; }
+.window .paper-panel h3 { margin: 0 0 8px; }
+/* win-sub divider must win over the panel neutralizer above (same specificity, later wins). */
+.window .win-sub { border-top: 1px dashed rgba(255,255,255,.12); padding-top: 12px; margin-top: 12px; }

@@ -1657,7 +1657,7 @@ def api_candles():
 
 @app.route("/api/version")
 def api_version():
-    return jsonify({"version": "v26.9"})
+    return jsonify({"version": "v26.10"})
 
 
 @app.route("/")
@@ -1764,5 +1764,5 @@ if __name__ == "__main__":
     # Locally it isn't -> loopback only, same as before.
     port = int(os.environ.get("PORT", "5000"))
     host = "0.0.0.0" if "PORT" in os.environ else "127.0.0.1"
-    print(f"Threaded v26.9 - serving on http://{host}:{port}")
+    print(f"Threaded v26.10 - serving on http://{host}:{port}")
     app.run(host=host, port=port, threaded=True)

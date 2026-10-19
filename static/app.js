@@ -1,4 +1,4 @@
-/* BTC 15-Minute Kalshi Analyzer — frontend (v26.9: single view — market + chart) */
+/* BTC 15-Minute Kalshi Analyzer — frontend (v26.10: four windows — market / chart / signals / trade) */
 const S = {
   history: 750, refreshSec: 3, paused: false,
   closeEpochMs: null, timer: null, quickTimer: null, countdownTimer: null,

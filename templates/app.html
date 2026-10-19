@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Threaded — BTC 15-Minute Analyzer</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧵</text></svg>">
-<link rel="stylesheet" href="/static/styles.css?v=26.9">
+<link rel="stylesheet" href="/static/styles.css?v=26.10">
 </head>
 <body>
 <div id="bg-image"></div>
@@ -13,9 +13,9 @@
 
 <header class="topbar">
   <a class="brand" href="/app">
-    <img class="brand-logo" src="/static/img/threaded_logo.webp?v=26.9" alt="Threaded logo">
+    <img class="brand-logo" src="/static/img/threaded_logo.webp?v=26.10" alt="Threaded logo">
     <span class="brand-name">Threaded</span>
-    <span class="ver-tag">v26.9</span>
+    <span class="ver-tag">v26.10</span>
   </a>
   <div class="price-chip">
     <span class="live-dot" id="live-dot" title="live"></span>
@@ -39,11 +39,11 @@
 
 <div class="controls-bar">
   <div class="yuki-mini">
-    <img src="/static/img/media-generation-anime-mascot-chibi-0-3d04dee7-3ef9-4526-82b3-0549ad5bd75d.webp?v=26.9" alt="Yuki">
+    <img src="/static/img/media-generation-anime-mascot-chibi-0-3d04dee7-3ef9-4526-82b3-0549ad5bd75d.webp?v=26.10" alt="Yuki">
     <div class="yuki-row">
-      <img src="/static/img/yuki-new-1.webp?v=26.9" alt="Yuki">
-      <img src="/static/img/yuki-new-2.webp?v=26.9" alt="Yuki">
-      <img src="/static/img/yuki-new-3.webp?v=26.9" alt="Yuki">
+      <img src="/static/img/yuki-new-1.webp?v=26.10" alt="Yuki">
+      <img src="/static/img/yuki-new-2.webp?v=26.10" alt="Yuki">
+      <img src="/static/img/yuki-new-3.webp?v=26.10" alt="Yuki">
     </div>
     <div class="who"><b>Yuki</b> · your trading copilot<br><span id="poll-status" class="poll-status">connecting…</span></div>
   </div>
@@ -65,8 +65,9 @@
 <main>
   <div id="dash-error" class="alert hidden"></div>
 
-  <!-- ================= KALSHI MARKET ================= -->
-  <section id="market-panel">
+  <!-- ================= WINDOW 1: MARKET — the call and why ================= -->
+  <section class="window" id="win-market">
+    <div class="window-head">📈 Market <span class="fine">— the call and why</span></div>
     <div id="dash-signal" class="signal-wait">
       <span class="signal-kicker">Live call — BTC 15-min</span>
       <h2 id="dash-signal-title">Loading…</h2>
@@ -103,40 +104,38 @@
       <div class="split-labels"><span id="split-up-pct">UP —</span><span id="split-down-pct">DOWN —</span></div>
       <p class="fine">Price-implied, not a vote count (Kalshi doesn't publish voter counts).</p>
     </div>
-  </section>
 
-  <!-- ================= ENTRY GATES + SELL TRIGGERS ================= -->
-  <section id="gates-panel">
-    <div class="buysell">
-      <div class="bs-col">
-        <h4>🟢 Entry gates — when to buy</h4>
-        <ul id="entry-checks" class="checklist"></ul>
-        <div class="strength"><div id="entry-fill" class="strength-fill"></div></div>
-        <div id="entry-banner" class="signal-wait slim"><b id="entry-banner-text"></b></div>
+    <div class="win-sub">
+      <div class="buysell">
+        <div class="bs-col">
+          <h4>🟢 Entry gates — when to buy</h4>
+          <ul id="entry-checks" class="checklist"></ul>
+          <div class="strength"><div id="entry-fill" class="strength-fill"></div></div>
+          <div id="entry-banner" class="signal-wait slim"><b id="entry-banner-text"></b></div>
+        </div>
+        <div class="bs-col">
+          <h4>🔴 Sell triggers — when to sell</h4>
+          <ul id="exit-checks" class="checklist"></ul>
+          <div id="exit-banner" class="signal-wait slim"><b id="exit-banner-text"></b></div>
+        </div>
       </div>
-      <div class="bs-col">
-        <h4>🔴 Sell triggers — when to sell</h4>
-        <ul id="exit-checks" class="checklist"></ul>
-        <div id="exit-banner" class="signal-wait slim"><b id="exit-banner-text"></b></div>
+    </div>
+
+    <div class="win-sub">
+      <div class="cards6">
+        <div class="card"><div class="card-label">P(above target) — blended</div><div class="card-value" id="s-blended">—</div></div>
+        <div class="card"><div class="card-label">History vote</div><div class="card-value" id="s-target-p">—</div></div>
+        <div class="card"><div class="card-label">Parametric vote</div><div class="card-value" id="s-param-p">—</div></div>
+        <div class="card"><div class="card-label">Net edge (called side)</div><div class="card-value" id="s-net-edge">—</div><div class="card-sub">after Kalshi fee</div></div>
+        <div class="card"><div class="card-label">Time left</div><div class="card-value" id="s-time-left">—</div></div>
+        <div class="card"><div class="card-label">Contract target</div><div class="card-value" id="s-target">—</div><div class="card-sub" id="s-candle">—</div></div>
       </div>
     </div>
   </section>
 
-  <!-- ================= STAT CARDS ================= -->
-  <section id="stat-cards">
-    <div class="cards6">
-      <div class="card"><div class="card-label">P(above target) — blended</div><div class="card-value" id="s-blended">—</div></div>
-      <div class="card"><div class="card-label">History vote</div><div class="card-value" id="s-target-p">—</div></div>
-      <div class="card"><div class="card-label">Parametric vote</div><div class="card-value" id="s-param-p">—</div></div>
-      <div class="card"><div class="card-label">Net edge (called side)</div><div class="card-value" id="s-net-edge">—</div><div class="card-sub">after Kalshi fee</div></div>
-      <div class="card"><div class="card-label">Time left</div><div class="card-value" id="s-time-left">—</div></div>
-      <div class="card"><div class="card-label">Contract target</div><div class="card-value" id="s-target">—</div><div class="card-sub" id="s-candle">—</div></div>
-    </div>
-  </section>
-
-  <!-- ================= CHART ================= -->
-  <section id="chart-panel">
-    <h2>BTC candlestick chart</h2>
+  <!-- ================= WINDOW 2: CHART — price + flip levels ================= -->
+  <section class="window" id="win-chart">
+    <div class="window-head">📊 Chart <span class="fine">— price + flip levels</span></div>
     <p class="fine">🟢 green = up · 🔴 red = down</p>
     <div class="chart-controls">
       <label>History
@@ -166,91 +165,94 @@
     <div class="chart-wrap"><canvas id="chart"></canvas></div>
     <p class="fine" id="chart-caption"></p>
     <p class="fine">Dashed lines: momentum flip levels from 1m momentum — 3m amber, 5m purple. Crossing a line flips that component's sign.</p>
+
+    <div id="flip-panel" class="flip-panel win-sub" hidden>
+      <div class="flip-head">🔄 Momentum Flip Watch <span class="fine" id="flip-state"></span><span id="flip-badge" class="flip-badge hidden">⚠️ FLIP WATCH</span></div>
+      <div class="flip-row">
+        <div id="flip-r3">—</div>
+        <div id="flip-r5">—</div>
+      </div>
+      <div class="flip-nearest" id="flip-nearest">—</div>
+      <div class="fine" id="flip-last">—</div>
+      <p class="fine">Display only — momentum flips when price crosses the 3- or 5-minute-ago close. It does not change the call.</p>
+    </div>
   </section>
 
-  <!-- ================= MOMENTUM FLIP WATCH ================= -->
-  <div id="flip-panel" class="flip-panel" hidden>
-    <div class="flip-head">🔄 Momentum Flip Watch <span class="fine" id="flip-state"></span><span id="flip-badge" class="flip-badge hidden">⚠️ FLIP WATCH</span></div>
-    <div class="flip-row">
-      <div id="flip-r3">—</div>
-      <div id="flip-r5">—</div>
+  <!-- ================= WINDOW 3: SIGNALS — supporting reads ================= -->
+  <section class="window" id="win-signals">
+    <div class="window-head">⚡ Signals <span class="fine">— supporting reads, display only</span></div>
+    <div id="flow-panel" class="why-panel win-sub" hidden>
+      <div class="why-head">📊 Order flow <span class="fine">display only</span></div>
+      <div id="flow-rows" class="why-rows"></div>
+      <p class="fine">Display only — order flow never changes the call.</p>
     </div>
-    <div class="flip-nearest" id="flip-nearest">—</div>
-    <div class="fine" id="flip-last">—</div>
-    <p class="fine">Display only — momentum flips when price crosses the 3- or 5-minute-ago close. It does not change the call.</p>
-  </div>
 
-  <!-- ================= ORDER FLOW ================= -->
-  <div id="flow-panel" class="why-panel" hidden>
-    <div class="why-head">📊 Order flow <span class="fine">display only</span></div>
-    <div id="flow-rows" class="why-rows"></div>
-    <p class="fine">Display only — order flow never changes the call.</p>
-  </div>
-
-  <!-- ================= SCALE PLAN ================= -->
-  <div id="scale-panel" class="scale-panel" hidden>
-    <div class="scale-head">📐 Scale Plan <span class="fine" id="scale-status"></span></div>
-    <div class="scale-sub" id="scale-side">—</div>
-    <table class="scale-table">
-      <thead><tr><th>Entry</th><th>% of position</th><th>Contracts</th><th>Target</th><th>Fee / contract</th><th></th></tr></thead>
-      <tbody id="scale-tranches"></tbody>
-    </table>
-    <table class="scale-table">
-      <thead><tr><th>Exit</th><th>% of position</th><th>Contracts</th><th>Target</th><th>Fee / contract</th><th></th></tr></thead>
-      <tbody id="scale-exits"></tbody>
-    </table>
-    <div class="scale-fees" id="scale-fees">—</div>
-    <p class="fine">Display only — suggested guidance, not an order. Threaded never places trades. Kalshi rounds each order's fee UP to the next cent, so each tranche/exit pays its own rounded fee — shown per contract for this plan's tranche sizes (× your contracts). Exit fees estimated at their targets; holding to expiry charges no exit fee.</p>
-  </div>
-
-  <!-- ================= SCALP SIGNALS ================= -->
-  <div class="scalp-panel" id="scalp-panel" hidden>
-    <h3>⚡ Scalp signals <span id="scalp-verdict" class="scalp-verdict"></span></h3>
-    <div id="scalp-disagree" class="scalp-disagree" hidden></div>
-    <div class="buysell">
-      <div class="bs-col">
-        <h4>🟢 Scalp UP <span id="scalp-up-label" class="scalp-tag"></span></h4>
-        <div class="scalp-score"><b id="scalp-up-score">—</b><span>/100</span></div>
-        <div class="strength"><div id="scalp-up-fill" class="strength-fill"></div></div>
-        <div class="scalp-stats" id="scalp-up-stats"></div>
-        <ul id="scalp-up-reasons" class="checklist"></ul>
+    <div class="scalp-panel win-sub" id="scalp-panel" hidden>
+      <h3>⚡ Scalp signals <span id="scalp-verdict" class="scalp-verdict"></span></h3>
+      <div id="scalp-disagree" class="scalp-disagree" hidden></div>
+      <div class="buysell">
+        <div class="bs-col">
+          <h4>🟢 Scalp UP <span id="scalp-up-label" class="scalp-tag"></span></h4>
+          <div class="scalp-score"><b id="scalp-up-score">—</b><span>/100</span></div>
+          <div class="strength"><div id="scalp-up-fill" class="strength-fill"></div></div>
+          <div class="scalp-stats" id="scalp-up-stats"></div>
+          <ul id="scalp-up-reasons" class="checklist"></ul>
+        </div>
+        <div class="bs-col">
+          <h4>🔴 Scalp DOWN <span id="scalp-down-label" class="scalp-tag"></span></h4>
+          <div class="scalp-score"><b id="scalp-down-score">—</b><span>/100</span></div>
+          <div class="strength"><div id="scalp-down-fill" class="strength-fill down"></div></div>
+          <div class="scalp-stats" id="scalp-down-stats"></div>
+          <ul id="scalp-down-reasons" class="checklist"></ul>
+        </div>
       </div>
-      <div class="bs-col">
-        <h4>🔴 Scalp DOWN <span id="scalp-down-label" class="scalp-tag"></span></h4>
-        <div class="scalp-score"><b id="scalp-down-score">—</b><span>/100</span></div>
-        <div class="strength"><div id="scalp-down-fill" class="strength-fill down"></div></div>
-        <div class="scalp-stats" id="scalp-down-stats"></div>
-        <ul id="scalp-down-reasons" class="checklist"></ul>
-      </div>
+      <p class="fine">2-min chance is a rough heuristic, not backtested. EV is after fees (1-contract taker fee). Quick in-and-out gauge — the latched call above is the real signal.</p>
     </div>
-    <p class="fine">2-min chance is a rough heuristic, not backtested. EV is after fees (1-contract taker fee). Quick in-and-out gauge — the latched call above is the real signal.</p>
-  </div>
+  </section>
 
-  <!-- ================= PAPER BETTING ================= -->
-  <div class="paper-panel" id="paper-panel">
-    <h3>📝 Paper betting <span class="fine">simulated — no real money</span></h3>
-    <div class="paper-place">
-      <div class="paper-sides">
-        <button id="paper-yes" class="paper-side-btn">UP <b id="paper-yes-price">—</b></button>
-        <button id="paper-no" class="paper-side-btn">DOWN <b id="paper-no-price">—</b></button>
-      </div>
-      <label class="paper-field">Contracts <input id="paper-contracts" type="number" value="10" min="1" max="10000" step="1"></label>
-      <label class="paper-field">Price ¢ <input id="paper-price" type="number" min="1" max="99" step="0.5" placeholder="ask"></label>
-      <button id="paper-place" class="btn-primary">Place paper bet</button>
+  <!-- ================= WINDOW 4: TRADE — sizing + practice ================= -->
+  <section class="window" id="win-trade">
+    <div class="window-head">📝 Trade <span class="fine">— sizing + practice</span></div>
+    <div id="scale-panel" class="scale-panel win-sub" hidden>
+      <div class="scale-head">📐 Scale Plan <span class="fine" id="scale-status"></span></div>
+      <div class="scale-sub" id="scale-side">—</div>
+      <table class="scale-table">
+        <thead><tr><th>Entry</th><th>% of position</th><th>Contracts</th><th>Target</th><th>Fee / contract</th><th></th></tr></thead>
+        <tbody id="scale-tranches"></tbody>
+      </table>
+      <table class="scale-table">
+        <thead><tr><th>Exit</th><th>% of position</th><th>Contracts</th><th>Target</th><th>Fee / contract</th><th></th></tr></thead>
+        <tbody id="scale-exits"></tbody>
+      </table>
+      <div class="scale-fees" id="scale-fees">—</div>
+      <p class="fine">Display only — suggested guidance, not an order. Threaded never places trades. Kalshi rounds each order's fee UP to the next cent, so each tranche/exit pays its own rounded fee — shown per contract for this plan's tranche sizes (× your contracts). Exit fees estimated at their targets; holding to expiry charges no exit fee.</p>
     </div>
-    <div id="paper-open" class="paper-list"></div>
-    <div id="paper-history" class="paper-list"></div>
-    <div class="paper-totals" id="paper-totals"></div>
-    <p class="fine">Entry fills at the live ask, exits at the bid. Bets auto-settle when the market window rolls, using the last seen BTC price vs the target (estimated). <a href="#" id="paper-clear">clear history</a></p>
-  </div>
+
+    <div class="paper-panel win-sub" id="paper-panel">
+      <h3>📝 Paper betting <span class="fine">simulated — no real money</span></h3>
+      <div class="paper-place">
+        <div class="paper-sides">
+          <button id="paper-yes" class="paper-side-btn">UP <b id="paper-yes-price">—</b></button>
+          <button id="paper-no" class="paper-side-btn">DOWN <b id="paper-no-price">—</b></button>
+        </div>
+        <label class="paper-field">Contracts <input id="paper-contracts" type="number" value="10" min="1" max="10000" step="1"></label>
+        <label class="paper-field">Price ¢ <input id="paper-price" type="number" min="1" max="99" step="0.5" placeholder="ask"></label>
+        <button id="paper-place" class="btn-primary">Place paper bet</button>
+      </div>
+      <div id="paper-open" class="paper-list"></div>
+      <div id="paper-history" class="paper-list"></div>
+      <div class="paper-totals" id="paper-totals"></div>
+      <p class="fine">Entry fills at the live ask, exits at the bid. Bets auto-settle when the market window rolls, using the last seen BTC price vs the target (estimated). <a href="#" id="paper-clear">clear history</a></p>
+    </div>
+  </section>
 </main>
 
 <footer>
   <b>🧵 Threaded</b> · Made with 💜 by Yuki · Research only, <b>not financial advice</b>. Verify everything on Kalshi before trading.
   <a href="/record">Public record</a>
-  <span class="ver-badge">v26.9 · Instant</span>
+  <span class="ver-badge">v26.10 · Instant</span>
 </footer>
 
-<script src="/static/app.js?v=26.9"></script>
+<script src="/static/app.js?v=26.10"></script>
 </body>
 </html>
