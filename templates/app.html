@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Threaded — BTC 15-Minute Analyzer</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧵</text></svg>">
-<link rel="stylesheet" href="/static/styles.css?v=26.7">
+<link rel="stylesheet" href="/static/styles.css?v=26.9">
 </head>
 <body>
 <div id="bg-image"></div>
@@ -13,9 +13,9 @@
 
 <header class="topbar">
   <a class="brand" href="/app">
-    <img class="brand-logo" src="/static/img/threaded_logo.webp?v=26.7" alt="Threaded logo">
+    <img class="brand-logo" src="/static/img/threaded_logo.webp?v=26.9" alt="Threaded logo">
     <span class="brand-name">Threaded</span>
-    <span class="ver-tag">v26.8</span>
+    <span class="ver-tag">v26.9</span>
   </a>
   <div class="price-chip">
     <span class="live-dot" id="live-dot" title="live"></span>
@@ -39,7 +39,12 @@
 
 <div class="controls-bar">
   <div class="yuki-mini">
-    <img src="/static/img/media-generation-anime-mascot-chibi-0-3d04dee7-3ef9-4526-82b3-0549ad5bd75d.webp?v=26.7" alt="Yuki">
+    <img src="/static/img/media-generation-anime-mascot-chibi-0-3d04dee7-3ef9-4526-82b3-0549ad5bd75d.webp?v=26.9" alt="Yuki">
+    <div class="yuki-row">
+      <img src="/static/img/yuki-new-1.webp?v=26.9" alt="Yuki">
+      <img src="/static/img/yuki-new-2.webp?v=26.9" alt="Yuki">
+      <img src="/static/img/yuki-new-3.webp?v=26.9" alt="Yuki">
+    </div>
     <div class="who"><b>Yuki</b> · your trading copilot<br><span id="poll-status" class="poll-status">connecting…</span></div>
   </div>
   <div class="settings">
@@ -97,6 +102,23 @@
       <div class="split-bar"><div id="split-up-fill" class="split-up-fill"></div></div>
       <div class="split-labels"><span id="split-up-pct">UP —</span><span id="split-down-pct">DOWN —</span></div>
       <p class="fine">Price-implied, not a vote count (Kalshi doesn't publish voter counts).</p>
+    </div>
+  </section>
+
+  <!-- ================= ENTRY GATES + SELL TRIGGERS ================= -->
+  <section id="gates-panel">
+    <div class="buysell">
+      <div class="bs-col">
+        <h4>🟢 Entry gates — when to buy</h4>
+        <ul id="entry-checks" class="checklist"></ul>
+        <div class="strength"><div id="entry-fill" class="strength-fill"></div></div>
+        <div id="entry-banner" class="signal-wait slim"><b id="entry-banner-text"></b></div>
+      </div>
+      <div class="bs-col">
+        <h4>🔴 Sell triggers — when to sell</h4>
+        <ul id="exit-checks" class="checklist"></ul>
+        <div id="exit-banner" class="signal-wait slim"><b id="exit-banner-text"></b></div>
+      </div>
     </div>
   </section>
 
@@ -226,9 +248,9 @@
 <footer>
   <b>🧵 Threaded</b> · Made with 💜 by Yuki · Research only, <b>not financial advice</b>. Verify everything on Kalshi before trading.
   <a href="/record">Public record</a>
-  <span class="ver-badge">v26.8 · Instant</span>
+  <span class="ver-badge">v26.9 · Instant</span>
 </footer>
 
-<script src="/static/app.js?v=26.7"></script>
+<script src="/static/app.js?v=26.9"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-/* BTC 15-Minute Kalshi Analyzer — frontend (v26.8: single view — market + chart) */
+/* BTC 15-Minute Kalshi Analyzer — frontend (v26.9: single view — market + chart) */
 const S = {
   history: 750, refreshSec: 3, paused: false,
   closeEpochMs: null, timer: null, quickTimer: null, countdownTimer: null,
@@ -28,6 +28,7 @@ async function pollState() {
     if (!d.ok) { showError("dash-error", d.error || "unknown error"); $("poll-status").textContent = "error"; return; }
     hideError("dash-error");
     renderMarket(d);
+    renderEntryExit(d);
     renderMarketSplit(d);
     renderStatCards(d);
     renderFlipWatch(d);
@@ -110,6 +111,66 @@ function renderMarket(d) {
   // v26.4: keep the latest 1m momentum flip levels for the chart overlay.
   S.flipLevels = d.momentum || null;
   if (chartData.length) drawChart();
+}
+
+/* ---------- entry gates + sell triggers (v26.5, display-only) ---------- */
+function renderEntryExit(d) {
+  const entry = d.entry, exit = d.exit;
+  const ec = $("entry-checks"), xc = $("exit-checks");
+  ec.innerHTML = ""; xc.innerHTML = "";
+  const call = d.call || {};
+  if (!entry || !exit) {
+    ec.innerHTML = "<li>No call right now — Yuki is sitting this one out. ☕</li>";
+    xc.innerHTML = "<li>Nothing to exit — no call is live.</li>";
+    $("entry-banner").className = "signal-wait slim";
+    $("entry-banner-text").textContent = "SIT OUT.";
+    $("exit-banner").className = "signal-wait slim";
+    $("exit-banner-text").textContent = "No exit signal.";
+    $("entry-fill").style.width = "0";
+    return;
+  }
+  entry.checks.forEach((c) => {
+    const li = document.createElement("li");
+    li.innerHTML = (c.ok ? "✅" : "❌") + " <b>" + c.label + "</b><br><span class='detail'>" + c.detail + "</span>";
+    ec.appendChild(li);
+  });
+  const frac = entry.total ? entry.passed / entry.total : 0;
+  $("entry-fill").style.width = Math.round(frac * 100) + "%";
+  const eb = $("entry-banner"), ebt = $("entry-banner-text");
+  const buyLabel = "BET " + entry.side;
+  if (call.status === "active") {
+    eb.className = "signal-up slim";
+    ebt.textContent = "📌 CALL SEALED — " + buyLabel + " at " + cents(call.seal_ask) + " ask. Latched; entry gates stay frozen until the window rolls.";
+  } else if (call.status === "sold") {
+    eb.className = "signal-wait slim";
+    ebt.textContent = "🔴 CALL SOLD — " + (call.sell_reason || "sell trigger fired") + ". No fresh entry this window.";
+  } else if (entry.status === "open") {
+    eb.className = "signal-up slim";
+    ebt.textContent = "🚀 GATES CLEAR — confirming (" + (call.confirm || 0) + "/" + (call.confirm_needed || 2) + ") for " + buyLabel + ".";
+  } else if (entry.status === "almost") {
+    eb.className = "signal-wait slim";
+    ebt.textContent = "👀 ALMOST — " + entry.passed + "/" + entry.total + ". Waiting on: " + entry.missing.join(", ") + ".";
+  } else {
+    eb.className = "signal-wait slim";
+    ebt.textContent = "⏸️ SIT OUT — " + entry.passed + "/" + entry.total + " gates met.";
+  }
+
+  exit.triggers.forEach((t) => {
+    const li = document.createElement("li");
+    li.innerHTML = (t.fired ? "🔔" : "▫️") + " <b>" + t.label + "</b><br><span class='detail'>" + t.detail + "</span>";
+    xc.appendChild(li);
+  });
+  const xb = $("exit-banner"), xbt = $("exit-banner-text");
+  if (exit.status === "exit") {
+    xb.className = "signal-down slim";
+    xbt.innerHTML = "🔔 SELL — " + (call.sell_reason || "a sell trigger fired") + "<br>• " + exit.fired_labels.join("<br>• ");
+  } else if (call.status === "active") {
+    xb.className = "signal-up slim";
+    xbt.textContent = "💎 HOLD — no sell triggers. Let the call work.";
+  } else {
+    xb.className = "signal-wait slim";
+    xbt.textContent = "No call live — nothing to sell.";
+  }
 }
 
 /* ---------- six stat cards (v26.5 layout, s- IDs: the market panel owns c-*) ---------- */
